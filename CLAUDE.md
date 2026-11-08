@@ -38,6 +38,28 @@ Do not run `npm run build` while `npm run dev` runs. `copy-assets.mjs` rewrites
 `public/vendor`, and the dev server then returns HTML for the worker file. The error is
 `Unexpected token '<'`.
 
+## Camera: the live view aims, a photo is what OCR reads
+
+A video frame puts the whole form at about 1000 px (a portrait 1080 px stream, guide frame
+at 90% of its width). On the real form that lost VS and KS; the same form at 1930 px read
+everything. So OCR never gets a plain video frame when a photo is possible:
+
+- **Chrome on Android (`ImageCapture`):** the stream finds the code, the shot fires when it
+  reads twice in a row at the same place (`isSteady`), and `takePhoto` asks for the largest
+  size from `getPhotoCapabilities`. The photo must contain the code too; if not (phone
+  lowered during the shutter lag), the video frame where the code read is used.
+- **Safari, Firefox, any phone without `ImageCapture`:** "Skenovať kamerou" opens the
+  phone's camera app (`<input capture>`), which gives a full photo. There is no live view.
+- **Fallbacks:** after 8 s without a code, the camera view offers the camera app; a live
+  shot that misses VS or amount offers it on the result screen. A browser opens the camera
+  app only from a tap, so both are buttons. The stream is stopped first: an iPhone cannot
+  share the camera.
+- `diag.capture` says which path took the image (`takePhoto WxH`, `video ...` with the
+  reason, or `file`). zxing alone is flaky at video resolution (the photo at 70% size did not
+  decode, at 60% it did); Chrome on Android uses its native detector first.
+- Test with Chromium's fake camera: `--use-fake-device-for-media-stream
+  --use-file-for-fake-video-capture=form.y4m` (make the y4m with ffmpeg from a photo).
+
 ## Recognition: what is solid and what is a guess
 
 - **Deskew ([deskew.ts](src/deskew.ts)):** the photo is turned by the barcode corners in quarter
@@ -79,7 +101,9 @@ Do not run `npm run build` while `npm run dev` runs. `copy-assets.mjs` rewrites
     missing, supplies the euros next to the boxed cents, flagged low. The words hold no cents.
   - A boxed field that page OCR cannot read goes to the cell pass ([cells.ts](src/cells.ts),
     `ocrBoxedDigits`): it isolates each printed character and reads it alone. A result counts
-    only when every character has confidence >= 70.
+    only when every character has confidence >= 70, and only with enough characters: 4 for KS
+    (it prints leading zeros), 2 for VS and SS. A smaller photo gave a confident VS `1` for
+    112606 when one shape survived the threshold.
 - **Tesseract traps:** a character tile needs a wide white margin (at 14 px a clean `9`
   returned nothing), and each page mode returns nothing for some clean characters, so
   `ocrBoxedDigits` tries three modes per character.
