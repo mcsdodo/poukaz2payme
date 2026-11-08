@@ -78,8 +78,13 @@ everything. So OCR never gets a plain video frame when a photo is possible:
   matches the example in the SBA standard (unit test). PAY by square round-trips through
   `bysquare` decode (unit test).
 - **Verified on one real form only (product 38):** the 48-digit barcode layout and the mod-11
-  weights gave `ok`. Product 36, 37 and the 50-digit layout have no real sample, so mod-11 is
-  still a signal and never blocks.
+  weights gave `ok`.
+- **Verified against the spec only (product 36, 50 digits):** the worked mod-11 example in
+  section 3.2 of Slovenská pošta's [Technické parametre](https://www.posta.sk/files/683817a52117f774bfbf4433/technicke-parametre-postovy-poukaz-na-ucet-a-postovy-poukaz-na-adresu.pdf)
+  parses with the right fields and check digit (unit test). The spec's field tables
+  (section 3.3) define all five layouts. Product 37 and the 48-digit product 36 have
+  neither a real sample nor a spec example. With no real form outside product 38, mod-11
+  is still a signal and never blocks.
 - **The barcode often holds zeros for VS and amount.** On that form only the IBAN came from
   it, so OCR is the only source for the other fields.
 - **Heuristic, in the order [extract.ts](src/extract.ts) tries them:**
