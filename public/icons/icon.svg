@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- The favicon's poukaz with its barcode, on the form green. Source of the PNG icons. -->
+  <rect width="32" height="32" fill="#006b3a"/>
+  <g style="transform-origin: 16px 16px; transform: scale(var(--s, 0.82))">
+    <rect x="1.5" y="7.5" width="29" height="17" fill="#f3eee1"/>
+    <path d="M6 17v5M8 17v5M9.5 17v5M12 17v5M14.5 17v5M16 17v5M19 17v5M21 17v5M23 17v5M26 17v5" stroke="#161a17" stroke-width="1"/>
+    <path d="M5 11h12M5 13.5h8" stroke="#006b3a"/>
+  </g>
+</svg>

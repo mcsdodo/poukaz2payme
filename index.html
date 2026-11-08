@@ -10,6 +10,8 @@
     <meta name="theme-color" content="#f3eee1" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#121814" media="(prefers-color-scheme: dark)" />
     <title>Poukaz na účet</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <script src="/theme.js"></script>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1.5' y='7.5' width='29' height='17' fill='%23f3eee1' stroke='%23006b3a' stroke-width='1.5'/%3E%3Cpath d='M6 17v5M8 17v5M9.5 17v5M12 17v5M14.5 17v5M16 17v5M19 17v5M21 17v5M23 17v5M26 17v5' stroke='%23161a17' stroke-width='1'/%3E%3Cpath d='M5 11h12M5 13.5h8' stroke='%23006b3a'/%3E%3C/svg%3E" />
   </head>
@@ -70,8 +72,9 @@
         </div>
 
         <p class="fine">
-          Spracovanie prebieha len v tomto telefóne, fotka sa nikam neposiela. Pri prvom použití sa
-          stiahne asi 15 MB na čítanie textu, potom zostane v pamäti prehliadača.
+          Spracovanie prebieha len v tomto telefóne, fotka sa nikam neposiela. Pri prvom skene sa
+          stiahne asi 15 MB na čítanie textu. Potom aplikácia funguje aj bez internetu a dá sa
+          pridať na plochu.
         </p>
         <p id="start-error" class="note block" hidden></p>
       </section>
@@ -206,11 +209,16 @@
             <a id="payme-link" class="btn primary wide" href="#" target="_blank" rel="noopener noreferrer">Otvoriť platbu v banke</a>
             <div class="url-row">
               <code id="payme-url"></code>
-              <button id="btn-copy-url" class="btn small" type="button">Kopírovať</button>
+              <div class="url-actions">
+                <button id="btn-copy-url" class="btn small" type="button">Kopírovať</button>
+                <!-- Shown only where the Web Share API exists. -->
+                <button id="btn-share" class="btn small" type="button" hidden>Zdieľať</button>
+              </div>
             </div>
             <div class="qr-wrap">
               <div class="qr-frame"><canvas id="qr"></canvas></div>
               <p class="fine">PAY by square. Naskenujte v bankovej aplikácii, napríklad z druhého telefónu alebo z počítača.</p>
+              <button id="btn-save-qr" class="btn small" type="button">Uložiť QR ako obrázok</button>
             </div>
           </div>
         </section>
