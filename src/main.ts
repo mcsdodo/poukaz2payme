@@ -6,6 +6,7 @@ import "@fontsource/ibm-plex-mono/500.css";
 import "./style.css";
 import QRCode from "qrcode";
 import { decode as decodeBySquare } from "bysquare/pay";
+import { rotatePoint, rotatedSize, zoneSkew, type Point } from "./deskew";
 import { decodeCanvas, lastZxingError, nativeFormats, orientationFromCorners, warmUpBarcode, type BarcodeHit } from "./barcode";
 import { extractFields, type BBox, type Extracted, type ExtractResult } from "./extract";
 import { bankName, formatIban, isValidIban, normalizeIban, splitSkIban, isValidLegacyPart } from "./iban";
@@ -93,14 +94,20 @@ function canvasFrom(src: CanvasImageSource, w: number, h: number, maxSide: numbe
   return c;
 }
 
+/** Turns clockwise by any angle. The corners a small turn uncovers are white, like paper. */
 function rotateCanvas(src: HTMLCanvasElement, deg: number): HTMLCanvasElement {
   const d = ((deg % 360) + 360) % 360;
   if (d === 0) return src;
   const c = document.createElement("canvas");
-  const swap = d === 90 || d === 270;
-  c.width = swap ? src.height : src.width;
-  c.height = swap ? src.width : src.height;
+  const size = rotatedSize(src.width, src.height, d);
+  c.width = size.w;
+  c.height = size.h;
   const ctx = c.getContext("2d", { willReadFrequently: true })!;
+  if (d % 90 !== 0) {
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.imageSmoothingQuality = "high";
+  }
   ctx.translate(c.width / 2, c.height / 2);
   ctx.rotate((d * Math.PI) / 180);
   ctx.drawImage(src, -src.width / 2, -src.height / 2);
@@ -131,6 +138,24 @@ function prepareForOcr(src: HTMLCanvasElement): HTMLCanvasElement {
   }
   ctx.putImageData(img, 0, 0);
   return c;
+}
+
+/** Smallest tilt worth a resample. 0.2 degrees moves a row 7 px across a 2000 px photo. */
+const MIN_SKEW = 0.2;
+
+/** Tilt of the form rows from the reading zone around the barcode, in degrees clockwise. */
+function measureSkew(canvas: HTMLCanvasElement, quad: Point[]): number | undefined {
+  const xs = quad.map((p) => p.x);
+  const ys = quad.map((p) => p.y);
+  const w = Math.max(...xs) - Math.min(...xs);
+  // zoneSkew looks 0.14 of the code width above and below; read only that part of the canvas.
+  const x0 = Math.max(0, Math.floor(Math.min(...xs)) - 2);
+  const y0 = Math.max(0, Math.floor(Math.min(...ys) - w * 0.16));
+  const x1 = Math.min(canvas.width, Math.ceil(Math.max(...xs)) + 2);
+  const y1 = Math.min(canvas.height, Math.ceil(Math.max(...ys) + w * 0.16));
+  if (x1 - x0 < 8 || y1 - y0 < 8) return undefined;
+  const img = canvas.getContext("2d", { willReadFrequently: true })!.getImageData(x0, y0, x1 - x0, y1 - y0);
+  return zoneSkew(img, quad.map((p) => ({ x: p.x - x0, y: p.y - y0 })));
 }
 
 function cropDataUrl(src: HTMLCanvasElement, b: BBox | undefined, pad = 12): string | undefined {
@@ -296,19 +321,39 @@ async function processImage(input: HTMLCanvasElement, extraRotation: number): Pr
     setWork("Čítam čiarový kód...");
     let canvas = rotateCanvas(canvasFrom(input, input.width, input.height, 2400), extraRotation);
     let hits = await decodeCanvas(canvas);
-    diag.barcodeHits = hits.map((h) => ({ engine: h.engine, format: h.format, text: h.text, orientation: h.orientation }));
+    // Positions are in the photo as delivered, for calibrating the field template later.
+    diag.barcodeHits = hits.map((h) => ({
+      engine: h.engine,
+      format: h.format,
+      text: h.text,
+      orientation: h.orientation,
+      position: h.position.map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) })),
+    }));
     diag.zxingError = lastZxingError;
 
     // 2. Rotate so the poukaz barcode is horizontal: it anchors the text direction.
+    // First the quarter turn from the barcode corners, then the small tilt
+    // measured on the reading zone, so the form rows run level for OCR and the cell crops.
     const pk = hits.find((h) => h.format === "Code128" && parsePoukazBarcode(h.text));
     let rotation = extraRotation;
     if (pk) {
       const a = orientationFromCorners(pk.position);
+      let quad: Point[] = pk.position;
       if (a !== 0) {
+        quad = quad.map((p) => rotatePoint(p, canvas.width, canvas.height, -a));
         canvas = rotateCanvas(canvas, -a);
         rotation = (rotation - a + 360) % 360;
       }
+      const t = performance.now();
+      const skew = measureSkew(canvas, quad);
+      diag.skew = { degrees: skew, ms: Math.round(performance.now() - t) };
+      if (skew !== undefined && Math.abs(skew) >= MIN_SKEW) {
+        const turned = rotateCanvas(canvas, -skew);
+        // Keep the OCR and color canvases the same size: the cell pass uses OCR boxes on the color image.
+        canvas = canvasFrom(turned, turned.width, turned.height, 2400);
+      }
     }
+    // Only the quarter turn: a reread measures the tilt again.
     state.rotation = rotation;
     diag.rotation = rotation;
 
@@ -385,6 +430,8 @@ function turnPhoto(deg: number): void {
   drawPhoto();
 }
 
+const PREDICTED_NOTE = "Popis poľa sa neprečítal, hodnota je z jeho miesta na tlačive. Overte ju.";
+
 function summarize(ex: ExtractResult): Record<string, string | undefined> {
   return {
     iban: ex.iban?.value,
@@ -395,6 +442,7 @@ function summarize(ex: ExtractResult): Record<string, string | undefined> {
     name: ex.name?.value,
     message: ex.message?.value,
     amountWords: ex.amountWords ? `${ex.amountWords.text} -> ${ex.amountWords.euros}` : undefined,
+    layout: ex.layout ? `${ex.layout.anchors} labels, error ${ex.layout.residual} px, added: ${ex.layout.added.join(", ") || "none"}` : "no fit",
   };
 }
 
@@ -463,10 +511,10 @@ async function secondPass(
     const r = await ocrBoxedDigits(colorCanvas, rect, max, key === "ks" ? isKnownKsClass : undefined);
     tries[key] = r;
     if (r.text) {
-      ex[key] = { value: r.text, confidence: r.confidence, bbox: rect, labelBox: b };
+      ex[key] = { value: r.text, confidence: r.confidence, bbox: rect, labelBox: b, predicted: f.predicted };
     } else if (key === "ks") {
       const value = r.partials.map(completeKs).find(Boolean);
-      if (value) ex.ks = { value, confidence: 40, bbox: rect, labelBox: b, filled: true };
+      if (value) ex.ks = { value, confidence: 40, bbox: rect, labelBox: b, filled: true, predicted: f.predicted };
     }
   }
   diag.secondPass = tries;
@@ -575,7 +623,7 @@ function merge(barcode: PoukazBarcode | null, ex: ExtractResult, ocrCanvas: HTML
         q[key].level = "high";
       }
     } else if (o?.value) {
-      setField(key, o.value, "ocr", ocrLevel(o.confidence), crop(o.bbox));
+      setField(key, o.value, "ocr", ocrLevel(o.confidence), crop(o.bbox), o.predicted ? PREDICTED_NOTE : undefined);
     } else if (o?.labelBox) {
       q[key].crop = crop({ x0: o.labelBox.x0, y0: o.labelBox.y0, x1: o.labelBox.x1 + (o.labelBox.x1 - o.labelBox.x0) * 0.6, y1: o.labelBox.y1 + (o.labelBox.y1 - o.labelBox.y0) * 3 });
     }
@@ -591,7 +639,7 @@ function merge(barcode: PoukazBarcode | null, ex: ExtractResult, ocrCanvas: HTML
   for (const key of ["name", "message"] as const) {
     if (q[key].source === "qr") continue;
     const o = ex[key];
-    if (o?.value) setField(key, o.value, "ocr", "low", crop(o.bbox));
+    if (o?.value) setField(key, o.value, "ocr", "low", crop(o.bbox), o.predicted ? PREDICTED_NOTE : undefined);
   }
 }
 
@@ -785,6 +833,92 @@ async function copy(text: string, btn: HTMLElement): Promise<void> {
   setTimeout(() => (btn.textContent = old), 1500);
 }
 
+// ---------- Share and save ----------
+
+/** File name part from the VS, or a date when the form has none. */
+function fileStem(): string {
+  const vs = input("vs").value.trim();
+  return vs ? `poukaz-vs${vs}` : `poukaz-${new Date().toISOString().slice(0, 10)}`;
+}
+
+async function shareLink(btn: HTMLElement): Promise<void> {
+  const url = $("payme-url").textContent ?? "";
+  if (!url) return;
+  const p = currentPayment();
+  const amount = p.amountCents ? `${formatAmount(p.amountCents).replace(".", ",")} EUR` : "";
+  try {
+    await navigator.share({ title: "Platba poukazu", text: [p.creditorName, amount].filter(Boolean).join(", "), url });
+  } catch (e) {
+    // The person closed the share sheet. Anything else: offer the copy button instead.
+    if (!(e instanceof DOMException && e.name === "AbortError")) await copy(url, btn);
+  }
+}
+
+/**
+ * The QR as a PNG, larger than on screen, with the payee and amount under it,
+ * so the image still says what it pays when it is opened later.
+ */
+async function qrImage(): Promise<Blob> {
+  const p = currentPayment();
+  const size = 640;
+  const qr = document.createElement("canvas");
+  await QRCode.toCanvas(qr, buildBySquare(p), { errorCorrectionLevel: "M", margin: 4, width: size });
+  const lines = [
+    p.creditorName,
+    [p.amountCents ? `${formatAmount(p.amountCents).replace(".", ",")} EUR` : "", p.vs ? `VS ${p.vs}` : "", p.ks ? `KS ${p.ks}` : ""]
+      .filter(Boolean)
+      .join("   "),
+  ].filter(Boolean);
+  const c = document.createElement("canvas");
+  c.width = size;
+  c.height = size + 24 + lines.length * 34;
+  const ctx = c.getContext("2d")!;
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.drawImage(qr, 0, 0);
+  ctx.fillStyle = "#1a1d1a";
+  ctx.textAlign = "center";
+  ctx.font = '500 24px "IBM Plex Sans Condensed", sans-serif';
+  lines.forEach((t, i) => ctx.fillText(t, size / 2, size + 8 + (i + 1) * 30, size - 32));
+  return new Promise((resolve, reject) => c.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob"))), "image/png"));
+}
+
+async function saveQr(btn: HTMLElement): Promise<void> {
+  const old = btn.textContent;
+  try {
+    const blob = await qrImage();
+    const file = new File([blob], `${fileStem()}.png`, { type: "image/png" });
+    // On a phone the share sheet has "Save image" and the photo apps. A desktop gets a download.
+    if (matchMedia("(pointer: coarse)").matches && navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: "PAY by square" });
+        return;
+      } catch (e) {
+        if (e instanceof DOMException && e.name === "AbortError") return;
+      }
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = file.name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  } catch {
+    btn.textContent = "Nepodarilo sa";
+    setTimeout(() => (btn.textContent = old), 1500);
+  }
+}
+
+// ---------- Offline ----------
+
+/** The service worker exists only in the build (vite.config.ts writes it). */
+function registerServiceWorker(): void {
+  if (!import.meta.env.PROD || !("serviceWorker" in navigator)) return;
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch((e) => console.warn("service worker", e));
+  });
+}
+
 // ---------- Theme ----------
 
 type Theme = "auto" | "light" | "dark";
@@ -909,6 +1043,9 @@ function wire(): void {
   }
 
   $("btn-copy-url").addEventListener("click", (e) => void copy($("payme-url").textContent ?? "", e.currentTarget as HTMLElement));
+  $("btn-share").hidden = typeof navigator.share !== "function";
+  $("btn-share").addEventListener("click", (e) => void shareLink(e.currentTarget as HTMLElement));
+  $("btn-save-qr").addEventListener("click", (e) => void saveQr(e.currentTarget as HTMLElement));
   $("btn-copy-diag").addEventListener("click", (e) => void copy($("diag").textContent ?? "", e.currentTarget as HTMLElement));
   $("btn-again").addEventListener("click", () => show("start"));
 
@@ -923,6 +1060,7 @@ function wire(): void {
 
   state.fields = emptyFields();
   show("start");
+  registerServiceWorker();
 }
 
 wire();
