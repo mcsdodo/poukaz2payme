@@ -130,6 +130,11 @@ main {
   margin: 0 auto;
   padding: 18px 16px 8px;
 }
+/* The hidden attribute must win over component display rules (.btn is inline-flex). */
+[hidden] {
+  display: none !important;
+}
+
 .view[hidden] {
   display: none;
 }
@@ -885,6 +890,15 @@ progress::-moz-progress-bar {
 }
 #btn-save-qr {
   margin-top: 12px;
+}
+#btn-native {
+  margin-top: 12px;
+}
+.retry {
+  margin-bottom: 14px;
+}
+.retry .fine {
+  margin: 0 0 8px;
 }
 
 /* ---------- Diagnostics and footer ---------- */
