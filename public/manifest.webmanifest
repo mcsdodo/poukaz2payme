@@ -1,0 +1,17 @@
+{
+  "name": "Poukaz na účet: zaplatiť prevodom",
+  "short_name": "Poukaz",
+  "description": "Naskenuje poštový poukaz na účet a vytvorí platbu pre bankovú aplikáciu. Všetko beží v telefóne.",
+  "lang": "sk",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f3eee1",
+  "theme_color": "#f3eee1",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

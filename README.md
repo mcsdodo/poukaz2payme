@@ -18,9 +18,15 @@ requests to other origins.
 | VS, SS | Plain copy on the left part of the form, then the boxed copy |
 | KS | Boxed copy, one digit at a time, checked against the known KS classes |
 | Name | OCR |
+| Message | OCR, from the message boxes of the form |
 
 Always compare the result with the form before you pay. OCR can read a field incorrectly.
 A field that needs attention has a flag and a note.
+
+The result gives a link that opens the payment in a bank app, a share button where the
+browser has one, and a PAY by square QR that can be saved as an image.
+
+After the first scan the app works offline, and it can be added to the home screen.
 
 ## Development
 

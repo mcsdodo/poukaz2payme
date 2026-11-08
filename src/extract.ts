@@ -1,11 +1,13 @@
 // Heuristic field extraction from OCR lines of a poukaz photo.
-// No ROI calibration exists yet (no real samples), so this works on labels
-// and patterns: find a label line, then read the value on the same line or
-// on the nearest line below that overlaps it horizontally.
+// This works on labels and patterns: find a label line, then read the value on
+// the same line or on the nearest line below that overlaps it horizontally.
+// Labels OCR missed are added first from the form template (layout.ts).
 
 import { parseEuroWords } from "./amountwords";
 import { isValidIban, normalizeIban } from "./iban";
+import { fitLayout } from "./layout";
 import { parseAmount } from "./payme";
+import { strip } from "./text";
 
 export interface BBox {
   x0: number;
@@ -18,6 +20,8 @@ export interface OcrLine {
   text: string;
   bbox: BBox;
   confidence: number;
+  /** A label OCR missed, placed by the form template. */
+  predicted?: boolean;
 }
 
 export interface Extracted {
@@ -29,6 +33,8 @@ export interface Extracted {
   labelBox?: BBox;
   /** Part of the value came from a list or the amount in words, not from these digits. */
   filled?: boolean;
+  /** Found next to a label that the form template placed, not one OCR read. */
+  predicted?: boolean;
 }
 
 export interface ExtractResult {
@@ -45,6 +51,8 @@ export interface ExtractResult {
   amountColumns?: { eur: BBox; cent: BBox };
   /** 48- or 50-digit runs, which may be the clear text under the barcode. */
   barcodeDigits: string[];
+  /** The form template fit, when enough labels were read. */
+  layout?: { anchors: number; residual: number; added: string[] };
 }
 
 /** Fix common OCR confusions inside a run that should be digits. */
@@ -55,13 +63,6 @@ export function fixDigits(s: string): string {
     .replace(/[Ss]/g, "5")
     .replace(/[B]/g, "8")
     .replace(/[Z]/g, "2");
-}
-
-function strip(s: string): string {
-  return s
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase();
 }
 
 export function findIban(text: string): string | undefined {
@@ -75,7 +76,8 @@ export function findIban(text: string): string | undefined {
 }
 
 const LABELS: Record<"vs" | "ss" | "ks" | "amount" | "name" | "message", RegExp> = {
-  vs: /variab/,
+  // OCR drops the first letter of the stub label: "ARIABILNY SYMBOL".
+  vs: /ariabil/,
   ss: /specif/,
   // The form prints "KONŠT. SYMBOL".
   ks: /konst(?:an|\.|\s*symbol)/,
@@ -243,8 +245,14 @@ function isLabelText(s: string): boolean {
   return Object.values(LABELS).some((re) => re.test(t)) || /(ulica|psc|obec|odosielatel|cislo uctu|referen)/.test(t);
 }
 
-export function extractFields(lines: OcrLine[]): ExtractResult {
+const MIN_MESSAGE_CONFIDENCE = 40;
+
+export function extractFields(ocrLines: OcrLine[]): ExtractResult {
   const res: ExtractResult = { barcodeDigits: [] };
+  const layout = fitLayout(ocrLines);
+  // Added labels go last, so a label OCR read comes first wherever the order matters.
+  const lines = layout ? [...ocrLines, ...layout.added] : ocrLines;
+  if (layout) res.layout = { anchors: layout.anchors, residual: layout.residual, added: layout.added.map((l) => l.text) };
   const all = lines.map((l) => l.text).join("\n");
 
   const iban = findIban(all);
@@ -269,14 +277,17 @@ export function extractFields(lines: OcrLine[]): ExtractResult {
     if (!labels.length) continue;
     let found: Extracted | undefined;
     for (const label of labels) {
-      let value = digitsAfterLabel(label.text, re, symbolMax[key]);
+      let value = label.predicted ? undefined : digitsAfterLabel(label.text, re, symbolMax[key]);
       let box: BBox = label.bbox;
+      // An added label has no confidence of its own: the value line gives it.
+      let confidence = label.confidence;
       if (!value) {
         for (const right of linesRightOf(lines, label)) {
           if (isLabelText(right.text)) continue;
           value = wholeLineDigits(right.text, symbolMax[key]);
           if (value) {
             box = right.bbox;
+            if (label.predicted) confidence = right.confidence;
             break;
           }
         }
@@ -288,17 +299,19 @@ export function extractFields(lines: OcrLine[]): ExtractResult {
           value = wholeLineDigits(below.text, symbolMax[key]);
           if (value) {
             box = below.bbox;
+            if (label.predicted) confidence = below.confidence;
             break;
           }
         }
       }
       if (value) {
-        found = { value, confidence: label.confidence, bbox: box, labelBox: label.bbox };
+        found = { value, confidence, bbox: box, labelBox: label.bbox, predicted: label.predicted };
         break;
       }
     }
     // The cell pass reads the boxed copy, which is under the rightmost label.
-    res[key] = found ?? { value: "", confidence: 0, labelBox: labels[labels.length - 1].bbox };
+    const boxed = labels[labels.length - 1];
+    res[key] = found ?? { value: "", confidence: 0, labelBox: boxed.bbox, predicted: boxed.predicted };
   }
 
   // Amount: a line with "=" first, then a "Suma" label.
@@ -333,7 +346,28 @@ export function extractFields(lines: OcrLine[]): ExtractResult {
       if (isLabelText(below.text)) continue;
       const v = below.text.replace(/[|_[\]]/g, " ").replace(/\s+/g, " ").trim();
       if (/[A-Za-zÀ-ž]{3,}/.test(v)) {
-        res[key] = { value: v, confidence: below.confidence, bbox: below.bbox, labelBox: label.bbox };
+        res[key] = { value: v, confidence: below.confidence, bbox: below.bbox, labelBox: label.bbox, predicted: label.predicted };
+        break;
+      }
+    }
+  }
+
+  // The message is printed over its label, so the label is rarely read. The template knows the boxes.
+  if (!res.message && layout) {
+    const a = layout.messageArea;
+    const inside = ocrLines
+      .filter((l) => {
+        const cx = (l.bbox.x0 + l.bbox.x1) / 2;
+        const cy = (l.bbox.y0 + l.bbox.y1) / 2;
+        return cx >= a.x0 && cx <= a.x1 && cy >= a.y0 && cy <= a.y1;
+      })
+      .sort((p, q) => p.bbox.y0 - q.bbox.y0);
+    for (const l of inside) {
+      // Box borders read as letters at low confidence ("THRRVN E" at 10); the real message read at 58.
+      if (isLabelText(l.text) || l.confidence < MIN_MESSAGE_CONFIDENCE) continue;
+      const v = l.text.replace(/[|_[\]]/g, " ").replace(/\s+/g, " ").trim();
+      if (/[A-Za-zÀ-ž]{3,}/.test(v)) {
+        res.message = { value: v, confidence: l.confidence, bbox: l.bbox, predicted: true };
         break;
       }
     }

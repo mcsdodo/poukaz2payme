@@ -878,6 +878,14 @@ progress::-moz-progress-bar {
   max-width: 300px;
   margin: 8px 0 0;
 }
+.url-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+#btn-save-qr {
+  margin-top: 12px;
+}
 
 /* ---------- Diagnostics and footer ---------- */
 
