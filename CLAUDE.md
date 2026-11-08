@@ -21,12 +21,37 @@ Tesseract loads only the `*.wasm.js` core files (the WASM is base64 inside them)
 SIMD, relaxed SIMD or plain at run time, so all of them are copied. `workerBlobURL: false`
 keeps the worker same-origin, so the CSP needs no `blob:` in `worker-src`.
 
+## Offline: the service worker
+
+The build writes `dist/sw.js` from [scripts/sw-template.js](scripts/sw-template.js) (plugin in
+[vite.config.ts](vite.config.ts)). It precaches the shell (HTML, bundles, woff2, zxing wasm,
+about 1.5 MB) and caches `vendor/` on first use, so a phone stores only the Tesseract core it
+runs. The shell cache name is a hash of the shell files; the vendor cache name is the Tesseract
+package versions, so a deploy keeps the 15 MB unless Tesseract changed. There is no
+`skipWaiting`: an open page keeps its old files, and the new version runs on the next start.
+`npm run dev` has no service worker. To test offline, build, `npx vite preview`, load once,
+then stop the server and reload.
+
+The icons in `public/icons/` are rendered from `icon.svg` by `node scripts/make-icons.cjs`.
+
 Do not run `npm run build` while `npm run dev` runs. `copy-assets.mjs` rewrites
 `public/vendor`, and the dev server then returns HTML for the worker file. The error is
 `Unexpected token '<'`.
 
 ## Recognition: what is solid and what is a guess
 
+- **Deskew ([deskew.ts](src/deskew.ts)):** the photo is turned by the barcode corners in quarter
+  turns, then by the tilt measured on the reading zone. zxing's corners for a 1D code are two
+  horizontal scan lines and carry no tilt, and the bars lean up to half a degree away from the
+  text rows when the paper is photographed at an angle. So `zoneSkew` projects the vertical
+  gradient of the zone onto rows and takes the sharpest profile. On the real photo turned by
+  known angles it was within 0.06 degrees. zxing stops decoding past about 4 degrees.
+- **Form template ([layout.ts](src/layout.ts)):** label positions of the real form after
+  deskew. An affine fit maps them onto the labels OCR read (needs 4, usually gets 30), and
+  each label OCR missed is added at its predicted place, so extract.ts finds its value as
+  usual. A label OCR read always wins. Values found next to an added label get a note. The
+  template also gives the message boxes: the message is printed over its label, so it is
+  read from the area, at OCR confidence >= 40, and flagged low.
 - **Solid:** IBAN from the Code 128C barcode, accepted when it passes mod-97. The payme link
   matches the example in the SBA standard (unit test). PAY by square round-trips through
   `bysquare` decode (unit test).
@@ -58,11 +83,13 @@ Do not run `npm run build` while `npm run dev` runs. `copy-assets.mjs` rewrites
 - **Tesseract traps:** a character tile needs a wide white margin (at 14 px a clean `9`
   returned nothing), and each page mode returns nothing for some clean characters, so
   `ocrBoxedDigits` tries three modes per character.
-- **Not solved:** a message printed over the green `SPRÁVA PRE ADRESÁTA` label stays empty and
-  needs manual entry. The boxed euro digits also read as nothing, so the words stand in. There
-  is no perspective correction and no ROI template.
+- **Not solved:** the message read from its area is often empty and sometimes wrong (`ŠTRKY`
+  for `STRAVNÉ` on one turned copy of the real photo). The boxed euro digits also read as nothing, so the words stand in. There
+  is no perspective correction: the affine template fit absorbs a mild keystone, about 10 px
+  on the real photo.
 
-The result screen has a "Diagnostika" panel (raw barcode digits, variant, checksums, OCR
-lines, timings). To add a failed form as a test, copy `ocrLines` into
+The result screen has a "Diagnostika" panel (raw barcode digits and corners, variant,
+checksums, tilt, template fit, OCR lines, timings). The OCR lines are after deskew; the
+existing fixture is from before deskew, so it is tilted by 1.78 degrees. To add a failed form as a test, copy `ocrLines` into
 [test/fixtures/](test/fixtures/) and replace all personal and payment data with fake values
 of the same shape, as the existing fixture does.

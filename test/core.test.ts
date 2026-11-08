@@ -5,6 +5,8 @@ import { mod11CheckDigit, parsePoukazBarcode } from "../src/poukaz";
 import { buildBySquare, buildPaymeLink, parseAmount, toAscii } from "../src/payme";
 import { extractFields, findIban, type OcrLine } from "../src/extract";
 import { segmentCells } from "../src/cells";
+import { fitLayout } from "../src/layout";
+import { rotatePoint, rotatedSize, zoneSkew } from "../src/deskew";
 import { completeKs, isKnownKsClass } from "../src/ks";
 import { euroWords, parseEuroWords } from "../src/amountwords";
 import realLines from "./fixtures/poukaz-real-form.lines.json";
@@ -329,5 +331,86 @@ describe("segmentCells", () => {
   });
   it("returns nothing for an empty crop", () => {
     expect(segmentCells(page(100, 40, []), 0.5)).toEqual([]);
+  });
+});
+
+describe("form template", () => {
+  const lines = realLines as OcrLine[];
+  const without = (re: RegExp, maxX = Infinity) => lines.filter((l) => !(re.test(l.text) && l.bbox.x0 < maxX));
+  const near = (a: { x0: number; y0: number }, b: { x0: number; y0: number }, tol: number) =>
+    Math.abs(a.x0 - b.x0) <= tol && Math.abs(a.y0 - b.y0) <= tol;
+
+  it("fits the real form, tilted as photographed, and adds nothing when OCR read every label", () => {
+    const layout = fitLayout(lines)!;
+    expect(layout.anchors).toBeGreaterThanOrEqual(20);
+    expect(layout.added.filter((l) => /SYMBOL|SUMA|ADRES/.test(l.text))).toEqual([]);
+  });
+  it("places a missed KS label where OCR had it", () => {
+    const ks = fitLayout(without(/KONST/))!.added.find((l) => /KON/.test(l.text))!;
+    expect(ks.predicted).toBe(true);
+    expect(near(ks.bbox, { x0: 1791, y0: 580 }, 8)).toBe(true);
+    // The cell pass then aims at it as at a read label.
+    expect(near(extractFields(without(/KONST/)).ks!.labelBox!, { x0: 1791, y0: 580 }, 8)).toBe(true);
+  });
+  it("finds the stub VS next to a missed label, with the value's confidence", () => {
+    const r = extractFields(without(/^VARIABILN/, 100));
+    expect(r.vs?.value).toBe("445577");
+    expect(r.vs?.predicted).toBe(true);
+    expect(r.vs?.confidence).toBe(94);
+  });
+  it("follows the form when the photo is smaller and shifted", () => {
+    const moved = without(/KONST/).map((l) => ({
+      ...l,
+      bbox: { x0: l.bbox.x0 * 0.6 + 120, y0: l.bbox.y0 * 0.6 - 40, x1: l.bbox.x1 * 0.6 + 120, y1: l.bbox.y1 * 0.6 - 40 },
+    }));
+    const ks = fitLayout(moved)!.added.find((l) => /KON/.test(l.text))!;
+    expect(near(ks.bbox, { x0: 1791 * 0.6 + 120, y0: 580 * 0.6 - 40 }, 6)).toBe(true);
+  });
+  it("needs real labels: no fit from text that is not the form", () => {
+    expect(fitLayout([line("Faktúra 2026/114", 100, 100), line("Spolu 12,50", 100, 200)])).toBeUndefined();
+  });
+  it("drops a label OCR read in the wrong place", () => {
+    const stray = { text: "SLOVOM", bbox: { x0: 100, y0: 1300, x1: 180, y1: 1315 }, confidence: 90 };
+    const layout = fitLayout([...without(/^SLOVOM$/), stray])!;
+    expect(layout.residual).toBeLessThanOrEqual(20);
+  });
+  it("reads the message from its boxes, where it is printed over the label", () => {
+    const withMessage = lines.map((l) => (l.text === "THRRVN E" ? { ...l, text: "OBEDY", confidence: 60 } : l));
+    expect(extractFields(withMessage).message?.value).toBe("OBEDY");
+  });
+  it("ignores box borders read as letters in the message area", () => {
+    expect(extractFields(lines).message).toBeUndefined();
+  });
+});
+
+describe("deskew", () => {
+  // A white page with a dark band of "bars" whose rows run at `deg` clockwise.
+  function zone(deg: number) {
+    const w = 900;
+    const h = 300;
+    const data = new Uint8ClampedArray(w * h * 4).fill(255);
+    const t = Math.tan((deg * Math.PI) / 180);
+    for (let x = 0; x < w; x++) {
+      if (x % 9 < 4) continue;
+      const top = Math.round(110 + (x - w / 2) * t);
+      for (let y = top; y < top + 80; y++) data.fill(20, (y * w + x) * 4, (y * w + x) * 4 + 3);
+    }
+    return { data, width: w, height: h };
+  }
+  const quad = [
+    { x: 20, y: 140 },
+    { x: 880, y: 140 },
+    { x: 880, y: 160 },
+    { x: 20, y: 160 },
+  ];
+  it.each([0, 1.5, -2.3, 3.8])("measures a %s degree tilt from the rows, not the scan-line corners", (deg) => {
+    expect(zoneSkew(zone(deg), quad)).toBeCloseTo(deg, 1);
+  });
+  it("maps points the way the canvas turns", () => {
+    // A quarter turn clockwise puts the top-left corner at the top-right.
+    const p = rotatePoint({ x: 0, y: 0 }, 400, 200, 90);
+    expect(p.x).toBeCloseTo(200);
+    expect(p.y).toBeCloseTo(0);
+    expect(rotatedSize(400, 200, 90)).toEqual({ w: 200, h: 400 });
   });
 });
