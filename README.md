@@ -3,6 +3,8 @@
 Scan a Slovak "Poštový poukaz na účet" in the browser. The app gives a payme link and a
 PAY by square QR code for a bank app.
 
+**Open the app: <https://mcsdodo.github.io/poukaz2payme/>**
+
 The camera, the barcode decode and the OCR all run in the browser. No image leaves the
 device. The app has no server, and a Content Security Policy in `index.html` blocks
 requests to other origins.
@@ -33,17 +35,10 @@ camera needs a secure context. Without HTTPS only the file input works.
 
 ## Publish
 
-The `ci` workflow runs the tests and the build on each push. It deploys to GitHub Pages
-only when the repository is public, so it skips the deploy while the repository is private.
+The `ci` workflow runs the tests and the build on each push. A push to `main` also deploys
+the site to GitHub Pages.
 
-To publish:
+## License
 
-1. Make the repository public.
-2. Enable Pages with the workflow as the source:
-   ```bash
-   gh api -X POST repos/{owner}/{repo}/pages -f build_type=workflow
-   ```
-3. Run the workflow again:
-   ```bash
-   gh workflow run ci
-   ```
+[MIT](LICENSE). The bundled libraries keep their own licenses: Apache-2.0 and MIT for the
+code, and OFL-1.1 for the IBM Plex fonts.
