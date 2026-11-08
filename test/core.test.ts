@@ -14,7 +14,8 @@ import realLines from "./fixtures/poukaz-real-form.lines.json";
 
 // Independent vectors: the IBAN and the payme link come from the design doc.
 // The barcode vectors below are built with this code's own mod-11, so they only
-// prove internal consistency, not agreement with real printed forms.
+// prove internal consistency, not agreement with real printed forms. The one
+// exception is the worked example from the Slovenská pošta specification.
 
 describe("IBAN", () => {
   it("accepts the doc's example IBAN", () => {
@@ -89,6 +90,24 @@ describe("poukaz barcode", () => {
     expect(r.iban).toBeUndefined();
     expect(r.reference).toBe("123456789");
     expect(r.ss).toBe("1148");
+  });
+
+  // The worked example in section 3.2 of Slovenská pošta's "Technické parametre - Poštový
+  // poukaz na účet a Poštový poukaz na adresu": product 36, 50 digits, check digit 3.
+  it("matches the mod-11 example in the Slovenská pošta specification", () => {
+    const code = "36000000190000104512020044444444440308000066660033";
+    expect(mod11CheckDigit(code.slice(0, -1))).toBe(3);
+    const r = parsePoukazBarcode(code)!;
+    expect(r.mod11).toBe("ok");
+    expect(r.variant).toBe("bban50");
+    expect(r.product).toBe("36");
+    expect(r.service).toBe("00");
+    expect(r.iban).toBe("SK1302000000190000104512");
+    expect(r.ibanValid).toBe(true);
+    expect(r.vs).toBe("4444444444");
+    expect(r.ks).toBe("308");
+    expect(r.processing).toBe("0");
+    expect(r.amountCents).toBe(6666003);
   });
 
   it("rejects other lengths", () => {
