@@ -269,6 +269,9 @@ export function extractFields(ocrLines: OcrLine[]): ExtractResult {
   }
 
   const symbolMax = { vs: 10, ss: 10, ks: 4 } as const;
+  // A KS prints all 4 digits, leading zeros too ("0179"). A shorter run is a misread
+  // border ("KONŠT. SYMBOL 1"), and the cell pass then reads the boxes.
+  const symbolMin = { vs: 1, ss: 1, ks: 4 } as const;
   for (const key of ["vs", "ss", "ks"] as const) {
     const re = LABELS[key];
     // The left stub repeats the field as plain text, and OCR reads that far
@@ -276,15 +279,16 @@ export function extractFields(ocrLines: OcrLine[]): ExtractResult {
     const labels = lines.filter((l) => re.test(strip(l.text))).sort((a, b) => a.bbox.x0 - b.bbox.x0);
     if (!labels.length) continue;
     let found: Extracted | undefined;
+    const fits = (v: string | undefined) => (v && v.length >= symbolMin[key] ? v : undefined);
     for (const label of labels) {
-      let value = label.predicted ? undefined : digitsAfterLabel(label.text, re, symbolMax[key]);
+      let value = label.predicted ? undefined : fits(digitsAfterLabel(label.text, re, symbolMax[key]));
       let box: BBox = label.bbox;
       // An added label has no confidence of its own: the value line gives it.
       let confidence = label.confidence;
       if (!value) {
         for (const right of linesRightOf(lines, label)) {
           if (isLabelText(right.text)) continue;
-          value = wholeLineDigits(right.text, symbolMax[key]);
+          value = fits(wholeLineDigits(right.text, symbolMax[key]));
           if (value) {
             box = right.bbox;
             if (label.predicted) confidence = right.confidence;
@@ -296,7 +300,7 @@ export function extractFields(ocrLines: OcrLine[]): ExtractResult {
         for (const below of linesBelow(lines, label)) {
           // A value under a nearer label belongs to that label.
           if (isLabelText(below.text)) break;
-          value = wholeLineDigits(below.text, symbolMax[key]);
+          value = fits(wholeLineDigits(below.text, symbolMax[key]));
           if (value) {
             box = below.bbox;
             if (label.predicted) confidence = below.confidence;

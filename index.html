@@ -91,7 +91,8 @@
           <button id="btn-torch" class="btn" hidden>Svetlo</button>
           <button id="btn-cam-cancel" class="btn">Späť</button>
         </div>
-        <p class="fine center">Poukaz rovno a bez odleskov. Keď sa kód prečíta, odfotí sa sám.</p>
+        <button id="btn-native" class="btn wide" type="button" hidden>Odfotiť fotoaparátom telefónu</button>
+        <p id="cam-hint" class="fine center">Poukaz rovno a bez odleskov. Keď sa kód prečíta a telefón je v pokoji, odfotí sa sám.</p>
       </section>
 
       <!-- Working -->
@@ -109,6 +110,11 @@
       <!-- Result -->
       <section id="view-result" class="view" hidden>
         <div id="alerts"></div>
+        <div id="retry-photo" class="retry" hidden>
+          <p class="fine">Z videa sa niektoré polia neprečítali. Fotka fotoaparátom telefónu má vyššie rozlíšenie.</p>
+          <button id="btn-retry-photo" class="btn wide" type="button">Skúsiť znova fotoaparátom</button>
+        </div>
+
 
         <form id="fields" class="sheet" autocomplete="off">
           <div class="sheet-head">

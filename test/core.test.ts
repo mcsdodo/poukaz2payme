@@ -7,6 +7,7 @@ import { extractFields, findIban, type OcrLine } from "../src/extract";
 import { segmentCells } from "../src/cells";
 import { fitLayout } from "../src/layout";
 import { rotatePoint, rotatedSize, zoneSkew } from "../src/deskew";
+import { isSteady } from "../src/barcode";
 import { completeKs, isKnownKsClass } from "../src/ks";
 import { euroWords, parseEuroWords } from "../src/amountwords";
 import realLines from "./fixtures/poukaz-real-form.lines.json";
@@ -281,6 +282,12 @@ describe("OCR extraction rules", () => {
   it("needs a real digit, not only look-alikes", () => {
     expect(extractFields([line("KONŠT. SYMBOL l", 100, 100)]).ks?.value).toBe("");
   });
+  it("does not take a short run as KS: it prints all 4 digits", () => {
+    const r = extractFields([line("KONŠT. SYMBOL 1", 100, 100)]);
+    expect(r.ks?.value).toBe("");
+    // The cell pass still gets the label to aim at.
+    expect(r.ks?.labelBox).toBeDefined();
+  });
 });
 
 /** Grayscale page as RGBA; `ink` paints dark rectangles. */
@@ -412,5 +419,23 @@ describe("deskew", () => {
     expect(p.x).toBeCloseTo(200);
     expect(p.y).toBeCloseTo(0);
     expect(rotatedSize(400, 200, 90)).toEqual({ w: 200, h: 400 });
+  });
+});
+
+describe("hold-still check", () => {
+  const q = (x: number, y: number, w: number) => [
+    { x, y },
+    { x: x + w, y },
+    { x: x + w, y: y + 40 },
+    { x, y: y + 40 },
+  ];
+  it("accepts the code at the same place and size", () => {
+    expect(isSteady(q(300, 900, 600), q(305, 903, 604), 1080)).toBe(true);
+  });
+  it("rejects a phone still moving across", () => {
+    expect(isSteady(q(300, 900, 600), q(340, 900, 600), 1080)).toBe(false);
+  });
+  it("rejects a phone moving closer", () => {
+    expect(isSteady(q(300, 900, 600), q(280, 900, 650), 1080)).toBe(false);
   });
 });
