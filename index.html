@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="sk">
+  <head>
+    <!-- GitHub Pages cannot set headers. This keeps the "no image leaves the device" promise enforced. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; style-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'" />
+    <meta name="referrer" content="no-referrer" />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f3eee1" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#121814" media="(prefers-color-scheme: dark)" />
+    <title>Poukaz na účet</title>
+    <script src="/theme.js"></script>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1.5' y='7.5' width='29' height='17' fill='%23f3eee1' stroke='%23006b3a' stroke-width='1.5'/%3E%3Cpath d='M6 17v5M8 17v5M9.5 17v5M12 17v5M14.5 17v5M16 17v5M19 17v5M21 17v5M23 17v5M26 17v5' stroke='%23161a17' stroke-width='1'/%3E%3Cpath d='M5 11h12M5 13.5h8' stroke='%23006b3a'/%3E%3C/svg%3E" />
+  </head>
+  <body>
+    <header class="masthead">
+      <div class="masthead-in">
+        <div>
+          <div class="kicker">Poštový poukaz na účet</div>
+          <h1>Zaplatiť prevodom</h1>
+        </div>
+        <div class="theme" role="group" aria-label="Farebná téma">
+          <button type="button" data-theme-set="auto" title="Podľa systému" aria-label="Téma podľa systému">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.5" fill="none" stroke="currentColor" stroke-width="1.6" /><path d="M10 3.5a6.5 6.5 0 0 1 0 13z" fill="currentColor" /></svg>
+          </button>
+          <button type="button" data-theme-set="light" title="Svetlá" aria-label="Svetlá téma">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="3.6" fill="none" stroke="currentColor" stroke-width="1.6" /><path d="M10 1.8v2.6M10 15.6v2.6M1.8 10h2.6M15.6 10h2.6M4.2 4.2l1.8 1.8M14 14l1.8 1.8M4.2 15.8 6 14M14 6l1.8-1.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
+          </button>
+          <button type="button" data-theme-set="dark" title="Tmavá" aria-label="Tmavá téma">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15.8 12.6A6.6 6.6 0 0 1 7.4 4.2a6.6 6.6 0 1 0 8.4 8.4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" /></svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <!-- Start -->
+      <section id="view-start" class="view">
+        <figure class="schematic" aria-hidden="true">
+          <div class="stamp">payme<br />by&nbsp;square</div>
+          <svg viewBox="0 0 207 100" role="img">
+            <rect class="paper" x="0.5" y="0.5" width="206" height="99" />
+            <path class="rule" d="M8 14h86M8 22h86M8 30h60M8 38h86" />
+            <text class="tiny" x="8" y="10">ADRESÁT</text>
+            <rect class="box" x="110" y="8" width="89" height="13" />
+            <text class="tiny" x="112" y="6">SUMA ČÍSLOM</text>
+            <text class="num" x="114" y="18">=</text>
+            <path class="rule" d="M110 30h89" />
+            <g class="cells">
+              <rect x="8" y="50" width="50" height="9" /><rect x="66" y="50" width="22" height="9" /><rect x="96" y="50" width="50" height="9" />
+            </g>
+            <text class="tiny" x="8" y="48">VS</text><text class="tiny" x="66" y="48">KS</text><text class="tiny" x="96" y="48">ŠS</text>
+            <rect class="zone" x="22" y="68" width="163" height="28" />
+            <path class="bars" d="M28.0 74v17h1.5v-17zM31.0 74v17h2v-17zM34.0 74v17h1v-17zM36.0 74v17h1.5v-17zM38.5 74v17h3v-17zM43.0 74v17h1v-17zM45.0 74v17h2v-17zM50.0 74v17h1v-17zM52.5 74v17h1v-17zM56.5 74v17h1v-17zM58.5 74v17h1v-17zM60.5 74v17h3v-17zM66.5 74v17h1v-17zM69.0 74v17h1v-17zM71.5 74v17h1.5v-17zM76.0 74v17h1v-17zM78.0 74v17h3v-17zM83.0 74v17h3v-17zM87.5 74v17h1v-17zM90.0 74v17h1.5v-17zM92.5 74v17h3v-17zM96.5 74v17h3v-17zM100.5 74v17h3v-17zM105.0 74v17h2v-17zM110.0 74v17h1.5v-17zM114.5 74v17h3v-17zM120.5 74v17h1.5v-17zM124.0 74v17h1v-17zM126.5 74v17h1v-17zM128.5 74v17h3v-17zM133.5 74v17h3v-17zM139.5 74v17h1.5v-17zM144.0 74v17h1.5v-17zM146.5 74v17h1v-17zM150.5 74v17h1v-17zM153.5 74v17h1v-17zM157.5 74v17h2v-17zM160.5 74v17h1v-17zM163.5 74v17h1.5v-17zM167.0 74v17h3v-17zM173.0 74v17h3v-17z" />
+          </svg>
+          <figcaption>Do záberu celý poukaz. Kód v čítacej zóne dole stačí na IBAN, ostatné polia sa dočítajú z textu.</figcaption>
+        </figure>
+
+        <div class="actions">
+          <button id="btn-camera" class="btn primary">Skenovať kamerou</button>
+          <div class="pair">
+            <!-- Two inputs: `capture` opens the camera directly and hides the gallery. -->
+            <label class="btn" for="file-input">Odfotiť</label>
+            <input id="file-input" type="file" accept="image/*" capture="environment" hidden />
+            <label class="btn" for="gallery-input">Z galérie</label>
+            <input id="gallery-input" type="file" accept="image/*" hidden />
+          </div>
+          <button id="btn-manual" class="textlink">Vyplniť ručne, bez skenu</button>
+        </div>
+
+        <p class="fine">
+          Spracovanie prebieha len v tomto telefóne, fotka sa nikam neposiela. Pri prvom použití sa
+          stiahne asi 15 MB na čítanie textu, potom zostane v pamäti prehliadača.
+        </p>
+        <p id="start-error" class="note block" hidden></p>
+      </section>
+
+      <!-- Camera -->
+      <section id="view-camera" class="view" hidden>
+        <div class="viewfinder">
+          <video id="video" playsinline muted autoplay></video>
+          <div class="frame"><div class="zone">čítacia zóna</div></div>
+        </div>
+        <p id="cam-status" class="status">Hľadám čiarový kód...</p>
+        <div class="actions row">
+          <button id="btn-shoot" class="btn primary">Odfotiť teraz</button>
+          <button id="btn-torch" class="btn" hidden>Svetlo</button>
+          <button id="btn-cam-cancel" class="btn">Späť</button>
+        </div>
+        <p class="fine center">Poukaz rovno a bez odleskov. Keď sa kód prečíta, odfotí sa sám.</p>
+      </section>
+
+      <!-- Working -->
+      <section id="view-work" class="view" hidden>
+        <ol id="steps" class="steps">
+          <li data-step="load">Fotka</li>
+          <li data-step="barcode">Čiarový kód</li>
+          <li data-step="ocr">Vytlačený text</li>
+          <li data-step="digits">Číselné polia</li>
+        </ol>
+        <p id="work-status" class="status">Spracúvam...</p>
+        <progress id="work-progress" max="1" value="0"></progress>
+      </section>
+
+      <!-- Result -->
+      <section id="view-result" class="view" hidden>
+        <div id="alerts"></div>
+
+        <form id="fields" class="sheet" autocomplete="off">
+          <div class="sheet-head">
+            <h2>Skontrolujte podľa poukazu</h2>
+            <p class="legend"><span class="tag ocr">OCR</span> prečítané z textu, overte</p>
+          </div>
+
+          <div class="field" data-key="iban">
+            <label for="f-iban">Číslo účtu adresáta (IBAN)</label>
+            <span class="badge"></span>
+            <input id="f-iban" class="mono" inputmode="text" spellcheck="false" />
+            <div class="hint"></div>
+            <img class="crop" alt="" hidden />
+          </div>
+
+          <div class="row2">
+            <div class="field grow" data-key="amount">
+              <label for="f-amount">Suma číslom</label>
+              <span class="badge"></span>
+              <div class="amount">
+                <span class="eq" aria-hidden="true">=</span>
+                <input id="f-amount" class="mono" inputmode="decimal" placeholder="0,00" />
+                <span class="cur" aria-hidden="true">EUR</span>
+              </div>
+              <div class="hint"></div>
+              <img class="crop" alt="" hidden />
+            </div>
+            <div class="field" data-key="ks">
+              <label for="f-ks">Konšt. symbol</label>
+              <span class="badge"></span>
+              <input id="f-ks" class="cells c4" inputmode="numeric" maxlength="4" />
+              <div class="hint"></div>
+              <img class="crop" alt="" hidden />
+            </div>
+          </div>
+
+          <div class="row2">
+            <div class="field" data-key="vs">
+              <label for="f-vs">Variabilný symbol</label>
+              <span class="badge"></span>
+              <input id="f-vs" class="cells c10" inputmode="numeric" maxlength="10" />
+              <div class="hint"></div>
+              <img class="crop" alt="" hidden />
+            </div>
+            <div class="field" data-key="ss">
+              <label for="f-ss">Špecifický symbol</label>
+              <span class="badge"></span>
+              <input id="f-ss" class="cells c10" inputmode="numeric" maxlength="10" />
+              <div class="hint"></div>
+              <img class="crop" alt="" hidden />
+            </div>
+          </div>
+
+          <div class="field" data-key="name">
+            <label for="f-name">Adresát: meno alebo názov</label>
+            <span class="badge"></span>
+            <input id="f-name" maxlength="70" />
+            <div class="hint"></div>
+            <img class="crop" alt="" hidden />
+          </div>
+
+          <div class="field" data-key="message">
+            <label for="f-message">Správa pre adresáta</label>
+            <span class="badge"></span>
+            <input id="f-message" maxlength="140" />
+            <div class="hint"></div>
+            <img class="crop" alt="" hidden />
+          </div>
+
+          <div class="field narrow" data-key="due">
+            <label for="f-due">Splatnosť (nepovinné)</label>
+            <span class="badge"></span>
+            <input id="f-due" type="date" />
+            <div class="hint"></div>
+          </div>
+
+          <details id="photo-box" class="photo">
+            <summary>Zobraziť fotku</summary>
+            <div class="photo-frame">
+              <canvas id="photo"></canvas>
+              <button id="btn-turn-left" class="turn left" type="button" aria-label="Otočiť doľava" title="Otočiť doľava">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5 3 10l5 5M3 10h11a6 6 0 0 1 0 12h-3" /></svg>
+              </button>
+              <button id="btn-turn-right" class="turn right" type="button" aria-label="Otočiť doprava" title="Otočiť doprava">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 5 5 5-5 5M21 10H10a6 6 0 0 0 0 12h3" /></svg>
+              </button>
+            </div>
+            <button id="btn-reprocess" class="btn" type="button">Prečítať znova</button>
+          </details>
+        </form>
+
+        <section id="output" class="stub">
+          <div class="stub-head">
+            <h2>Ústrižok pre banku</h2>
+          </div>
+          <p id="out-missing" class="note warn" hidden></p>
+          <div id="out-ready" hidden>
+            <a id="payme-link" class="btn primary wide" href="#" target="_blank" rel="noopener noreferrer">Otvoriť platbu v banke</a>
+            <div class="url-row">
+              <code id="payme-url"></code>
+              <button id="btn-copy-url" class="btn small" type="button">Kopírovať</button>
+            </div>
+            <div class="qr-wrap">
+              <div class="qr-frame"><canvas id="qr"></canvas></div>
+              <p class="fine">PAY by square. Naskenujte v bankovej aplikácii, napríklad z druhého telefónu alebo z počítača.</p>
+            </div>
+          </div>
+        </section>
+
+        <details class="diag" id="diag-box">
+          <summary>Diagnostika</summary>
+          <p class="fine">Ak niečo nesedí, skopírujte a pošlite.</p>
+          <button id="btn-copy-diag" class="btn small" type="button">Kopírovať diagnostiku</button>
+          <pre id="diag"></pre>
+        </details>
+
+        <div class="actions">
+          <button id="btn-again" class="btn primary">Ďalší poukaz</button>
+        </div>
+      </section>
+    </main>
+
+    <footer id="footer"></footer>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

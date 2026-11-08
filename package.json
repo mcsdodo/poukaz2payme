@@ -1,0 +1,28 @@
+{
+  "name": "poukaz2payme",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "assets": "node scripts/copy-assets.mjs",
+    "dev": "node scripts/copy-assets.mjs && vite",
+    "build": "node scripts/copy-assets.mjs && tsc --noEmit && vite build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/ibm-plex-sans-condensed": "^5.3.0",
+    "@tesseract.js-data/eng": "^1.0.0",
+    "@tesseract.js-data/slk": "^1.0.0",
+    "bysquare": "^4.1.1",
+    "qrcode": "^1.5.4",
+    "tesseract.js": "^7.0.0",
+    "zxing-wasm": "^3.1.6"
+  },
+  "devDependencies": {
+    "@types/qrcode": "^1.5.6",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.6",
+    "vitest": "^5.1.0"
+  }
+}
