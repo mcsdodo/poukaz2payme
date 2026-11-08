@@ -123,6 +123,8 @@ export async function ocrBoxedDigits(
   rect: BBox,
   maxLen: number,
   plausible: (text: string) => boolean = () => true,
+  /** Fewer characters is a reading that lost some, not a short number: a KS always prints 4. */
+  minLen = 1,
 ): Promise<BoxedRead> {
   const left = Math.max(0, Math.round(rect.x0));
   const top = Math.max(0, Math.round(rect.y0));
@@ -172,6 +174,7 @@ export async function ocrBoxedDigits(
       continue;
     }
     const text = cells.join("");
+    if (text.length < minLen) continue;
     if (plausible(text)) return { text, confidence, threshold: k, attempts, partials };
     firstRead ??= { text, confidence, threshold: k };
   }

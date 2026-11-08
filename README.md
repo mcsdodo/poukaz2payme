@@ -28,6 +28,10 @@ browser has one, and a PAY by square QR that can be saved as an image.
 
 After the first scan the app works offline, and it can be added to the home screen.
 
+On Android in Chrome the live view finds the form and the app takes a full-resolution photo.
+On an iPhone, "Skenovať kamerou" opens the phone's camera, because Safari cannot take a
+full-resolution photo from a live view, and a video frame is too small for the printed text.
+
 ## Development
 
 ```bash
