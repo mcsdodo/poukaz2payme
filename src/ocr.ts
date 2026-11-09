@@ -82,6 +82,37 @@ export async function ocrDigits(
   return { text: data.text.replace(/\s/g, ""), confidence: data.confidence };
 }
 
+/** Text height a line is scaled to for `ocrLine`, in px. */
+const LINE_TEXT_HEIGHT = 48;
+
+/**
+ * Reads one line of text again from its own crop, scaled to a fixed text
+ * height and read as a single line: a second reading, with other mistakes
+ * than the page's, for the vote in vote.ts.
+ */
+export async function ocrLine(canvas: HTMLCanvasElement, box: BBox): Promise<{ text: string; confidence: number }> {
+  const h = box.y1 - box.y0;
+  const left = Math.max(0, Math.round(box.x0 - h * 0.5));
+  const top = Math.max(0, Math.round(box.y0 - h * 0.3));
+  const width = Math.min(canvas.width - left, Math.round(box.x1 - box.x0 + h));
+  const height = Math.min(canvas.height - top, Math.round(h * 1.6));
+  if (width < 8 || height < 8) return { text: "", confidence: 0 };
+  const scale = LINE_TEXT_HEIGHT / h;
+  const pad = 24;
+  const c = document.createElement("canvas");
+  c.width = Math.round(width * scale) + pad * 2;
+  c.height = Math.round(height * scale) + pad * 2;
+  const ctx = c.getContext("2d")!;
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(canvas, left, top, width, height, pad, pad, c.width - pad * 2, c.height - pad * 2);
+  const w = await getOcrWorker();
+  await w.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_LINE, tessedit_char_whitelist: "", user_defined_dpi: "300" });
+  const { data } = await w.recognize(c);
+  return { text: data.text.replace(/\s+/g, " ").trim(), confidence: data.confidence };
+}
+
 /** Thresholds to try, as a fraction of the paper brightness. Tested on the real form. */
 const CELL_THRESHOLDS = [0.5, 0.4, 0.6];
 const CELL_SCALE = 3;

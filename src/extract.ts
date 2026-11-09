@@ -49,6 +49,8 @@ export interface ExtractResult {
   amountWords?: { text: string; euros: number; confidence: number };
   /** The "EUR" and "cent" labels of the boxed amount, for the cell pass. */
   amountColumns?: { eur: BBox; cent: BBox };
+  /** The first line under every ADRESÁT label: the stub's copy and the middle one, for the vote. */
+  nameCopies?: Extracted[];
   /** Two digits under a "cent" label: the cents, when the euros next to them were lost. */
   centsBelowLabel?: Extracted;
   /** 48- or 50-digit runs, which may be the clear text under the barcode. */
@@ -389,18 +391,27 @@ export function extractFields(ocrLines: OcrLine[]): ExtractResult {
   res.amountColumns = findAmountColumns(lines);
   res.centsBelowLabel = findCentsBelowLabel(lines);
 
-  for (const key of ["name", "message"] as const) {
-    const label = lines.find((l) => LABELS[key].test(strip(l.text)));
-    if (!label) continue;
+  const textUnder = (label: OcrLine): Extracted | undefined => {
     for (const below of linesBelow(lines, label, 3)) {
       if (isLabelText(below.text)) continue;
       const v = below.text.replace(/[|_[\]]/g, " ").replace(/\s+/g, " ").trim();
       if (/[A-Za-zÀ-ž]{3,}/.test(v)) {
-        res[key] = { value: v, confidence: below.confidence, bbox: below.bbox, labelBox: label.bbox, predicted: label.predicted };
-        break;
+        return { value: v, confidence: below.confidence, bbox: below.bbox, labelBox: label.bbox, predicted: label.predicted };
       }
     }
+    return undefined;
+  };
+  for (const key of ["name", "message"] as const) {
+    const label = lines.find((l) => LABELS[key].test(strip(l.text)));
+    const found = label && textUnder(label);
+    if (found) res[key] = found;
   }
+  const copies = lines
+    .filter((l) => LABELS.name.test(strip(l.text)))
+    .map(textUnder)
+    .filter((c): c is Extracted => !!c);
+  // Two labels can find the same line; each printed copy votes once.
+  res.nameCopies = copies.filter((c, i) => copies.findIndex((o) => o.bbox === c.bbox) === i);
 
   // The message is printed over its label, so the label is rarely read. The template knows the boxes.
   if (!res.message && layout) {
