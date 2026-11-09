@@ -102,6 +102,44 @@ function canvasFrom(src: CanvasImageSource, w: number, h: number, maxSide: numbe
   return c;
 }
 
+/**
+ * Frees a canvas's pixels now. A phone has little canvas memory, and Chrome on
+ * Android does not throw when it runs out: the next canvas just comes out blank.
+ */
+function release(...cs: (HTMLCanvasElement | undefined)[]): void {
+  for (const c of cs) {
+    if (!c) continue;
+    c.width = 0;
+    c.height = 0;
+  }
+}
+
+/** The next canvas of a chain; the previous one is freed when it is not the same. */
+function swap(prev: HTMLCanvasElement, next: HTMLCanvasElement): HTMLCanvasElement {
+  if (next !== prev) release(prev);
+  return next;
+}
+
+/** No pixels: the canvas could not be allocated (see `release`), or it is one flat colour. */
+function isBlank(c: HTMLCanvasElement): boolean {
+  if (!c.width || !c.height) return true;
+  const probe = document.createElement("canvas");
+  probe.width = probe.height = 48;
+  const ctx = probe.getContext("2d", { willReadFrequently: true })!;
+  ctx.drawImage(c, 0, 0, 48, 48);
+  const d = ctx.getImageData(0, 0, 48, 48).data;
+  let lo = 255;
+  let hi = 0;
+  let alpha = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    const v = (d[i] + d[i + 1] + d[i + 2]) / 3;
+    lo = Math.min(lo, v);
+    hi = Math.max(hi, v);
+    alpha = Math.max(alpha, d[i + 3]);
+  }
+  return alpha === 0 || hi - lo < 8;
+}
+
 /** Turns clockwise by any angle. The corners a small turn uncovers are white, like paper. */
 function rotateCanvas(src: HTMLCanvasElement, deg: number): HTMLCanvasElement {
   const d = ((deg % 360) + 360) % 360;
@@ -260,8 +298,30 @@ const STEADY_WINDOW_MS = 1500;
 /** After this long without a code, offer the phone's own camera app. */
 const NATIVE_HINT_MS = 8000;
 
+interface Range {
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
+/**
+ * Width the photo is asked for. OCR reads at most 3200 px, and a phone's largest
+ * photo (50 MP, 8160x6120) decodes to 200 MB before it is shrunk: on a phone that
+ * can leave the later canvases blank.
+ */
+const PHOTO_WIDTH = 4096;
+
+/** The largest value of the range up to `want`, on its steps. */
+function upTo(r: Range | undefined, want: number): number | undefined {
+  if (!r?.max) return undefined;
+  if (r.max <= want) return r.max;
+  const min = r.min ?? 0;
+  const step = r.step || 1;
+  return Math.max(min, min + Math.floor((want - min) / step) * step);
+}
+
 interface ImageCaptureLike {
-  getPhotoCapabilities(): Promise<{ imageWidth?: { max?: number }; imageHeight?: { max?: number }; fillLightMode?: string[] }>;
+  getPhotoCapabilities(): Promise<{ imageWidth?: Range; imageHeight?: Range; fillLightMode?: string[] }>;
   takePhoto(settings?: { imageWidth?: number; imageHeight?: number; fillLightMode?: string }): Promise<Blob>;
 }
 
@@ -352,7 +412,7 @@ interface Still {
 
 /**
  * A full-resolution photo where the browser can take one. Without a size,
- * takePhoto uses whatever the browser picks, so this asks for the largest.
+ * takePhoto uses whatever the browser picks, so this asks for about 4096 px.
  * A device that rejects the size gets a plain takePhoto, then the video frame.
  */
 async function grabStill(): Promise<Still | null> {
@@ -361,20 +421,23 @@ async function grabStill(): Promise<Still | null> {
   const errors: string[] = [];
   if (track && IC) {
     const capture = new IC(track);
-    let largest: { imageWidth: number; imageHeight: number } | undefined;
+    let sized: { imageWidth: number; imageHeight: number } | undefined;
     // No flash: Chrome's default lit it for the shot and the light stayed on while OCR ran.
     // A flash also puts a glare on the paper; the Svetlo button gives steady light instead.
     let light: { fillLightMode?: string } = {};
     try {
       const caps = await capture.getPhotoCapabilities();
-      if (caps.imageWidth?.max && caps.imageHeight?.max) largest = { imageWidth: caps.imageWidth.max, imageHeight: caps.imageHeight.max };
+      const width = upTo(caps.imageWidth, PHOTO_WIDTH);
+      const wmax = caps.imageWidth?.max;
+      const height = width && wmax && caps.imageHeight?.max ? upTo(caps.imageHeight, Math.round((width * caps.imageHeight.max) / wmax)) : undefined;
+      if (width && height) sized = { imageWidth: width, imageHeight: height };
       if (caps.fillLightMode?.includes("off")) light = { fillLightMode: "off" };
     } catch (e) {
       errors.push(`capabilities: ${String(e)}`);
     }
-    // Largest without flash, then the browser's size without flash, then anything it takes.
+    // About 4096 px without flash, then the browser's size without flash, then anything it takes.
     const tries: ({ imageWidth?: number; imageHeight?: number; fillLightMode?: string } | undefined)[] = [];
-    if (largest) tries.push({ ...largest, ...light });
+    if (sized) tries.push({ ...sized, ...light });
     if (light.fillLightMode) tries.push(light);
     tries.push(undefined);
     for (const settings of tries) {
@@ -529,7 +592,7 @@ function setField(key: FieldKey, value: string, source: Source, level: Level, cr
 }
 
 /** `capture` names the live path that took the image; a file has none. */
-async function processImage(input: HTMLCanvasElement, extraRotation: number, capture?: string): Promise<void> {
+async function processImage(input: HTMLCanvasElement, extraRotation: number, capture?: string, retried = false): Promise<void> {
   show("work");
   state.fields = emptyFields();
   state.alerts = [];
@@ -583,14 +646,19 @@ async function processImage(input: HTMLCanvasElement, extraRotation: number, cap
       diag.skew = { degrees: skew, ms: Math.round(performance.now() - t) };
       const tilt = skew !== undefined && Math.abs(skew) >= MIN_SKEW ? skew : 0;
       // Turn the input at its full size, so the crop keeps every pixel the photo has.
-      let full = rotateCanvas(rotateCanvas(canvasFrom(input, input.width, input.height, Infinity), extraRotation), -a);
+      // Each step frees the one before: on a phone the copies ran out of canvas memory.
+      let full = canvasFrom(input, input.width, input.height, Infinity);
+      full = swap(full, rotateCanvas(full, extraRotation));
+      full = swap(full, rotateCanvas(full, -a));
       quad = quad.map((p) => ({ x: p.x * detail, y: p.y * detail }));
       if (tilt) {
         quad = quad.map((p) => rotatePoint(p, full.width, full.height, -tilt));
-        full = rotateCanvas(full, -tilt);
+        full = swap(full, rotateCanvas(full, -tilt));
       }
       const form = cropToForm(full, quad);
+      release(full);
       diag.formCrop = form.note;
+      release(canvas);
       canvas = form.canvas;
     }
     // Only the quarter turn: a reread measures the tilt again.
@@ -610,6 +678,19 @@ async function processImage(input: HTMLCanvasElement, extraRotation: number, cap
     // Even out the light first: the cell pass reads the color image too.
     const flat = flattenCanvas(canvas);
     const ocrCanvas = prepareForOcr(flat);
+    // A blank image is a phone out of canvas memory (the barcode, read from a smaller copy,
+    // still gave the IBAN, and nothing else filled). Read it again from a smaller copy.
+    if (isBlank(ocrCanvas) || isBlank(flat)) {
+      const smaller = Math.round(Math.max(input.width, input.height) * 0.6);
+      release(flat, ocrCanvas, canvas);
+      if (!retried && smaller >= 1600) {
+        await processImage(canvasFrom(input, input.width, input.height, smaller), extraRotation, `${capture ?? "file"}; blank at ${input.width}x${input.height}, read again at ${smaller} px`, true);
+        // Saving and "Prečítať znova" take the photo as taken; a reread retries smaller again.
+        state.source = input;
+        return;
+      }
+      throw new Error("Obrázok sa nepodarilo spracovať (málo pamäte). Skúste znova alebo vyberte fotku z galérie.");
+    }
     const page = await ocrPage(ocrCanvas);
     diag.ocrMs = page.ms;
     diag.ocrText = page.text;
@@ -643,6 +724,8 @@ async function processImage(input: HTMLCanvasElement, extraRotation: number, cap
     setPhoto(canvasFrom(canvas, canvas.width, canvas.height, 1200));
 
     renderResult();
+    // The field crops are data URLs by now; the big copies are not needed.
+    release(flat, ocrCanvas);
     show("result");
   } catch (e) {
     console.error(e);
