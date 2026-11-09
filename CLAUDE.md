@@ -233,6 +233,10 @@ everything. So OCR never gets a plain video frame when a photo is possible:
   the real photo, and the grid's offset step absorbs the rest along a row. The page OCR's
   message (from `messageArea`) stays only when the boxes give fewer than 2 letters.
 
+The result screen's photo panel has "Uložiť fotku": it saves the image the scan read
+(`state.source`, the live shot or the file) as a JPEG, through the share sheet on a phone. A
+form that read badly can then be sent along with the diagnostics and added as a test.
+
 The result screen has a "Diagnostika" panel (raw barcode digits and corners, variant,
 checksums, tilt, template fit, OCR lines, timings). The OCR lines are after deskew; the
 existing fixture is from before deskew, so it is tilted by 1.78 degrees. To add a failed form as a test, copy `ocrLines` into

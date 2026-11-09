@@ -806,6 +806,14 @@ progress::-moz-progress-bar {
   position: relative;
   margin: 10px 0;
 }
+.photo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.photo-actions .btn {
+  flex: 1 1 140px;
+}
 #photo {
   display: block;
   width: 100%;

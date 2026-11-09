@@ -1248,26 +1248,46 @@ async function qrImage(): Promise<Blob> {
   return new Promise((resolve, reject) => c.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob"))), "image/png"));
 }
 
+/** On a phone the share sheet has "Save image" and the photo apps. A desktop gets a download. */
+async function saveFile(blob: Blob, name: string, title: string): Promise<void> {
+  const file = new File([blob], name, { type: blob.type });
+  if (matchMedia("(pointer: coarse)").matches && navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title });
+      return;
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") return;
+    }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 async function saveQr(btn: HTMLElement): Promise<void> {
   const old = btn.textContent;
   try {
-    const blob = await qrImage();
-    const file = new File([blob], `${fileStem()}.png`, { type: "image/png" });
-    // On a phone the share sheet has "Save image" and the photo apps. A desktop gets a download.
-    if (matchMedia("(pointer: coarse)").matches && navigator.canShare?.({ files: [file] })) {
-      try {
-        await navigator.share({ files: [file], title: "PAY by square" });
-        return;
-      } catch (e) {
-        if (e instanceof DOMException && e.name === "AbortError") return;
-      }
-    }
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = file.name;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    await saveFile(await qrImage(), `${fileStem()}.png`, "PAY by square");
+  } catch {
+    btn.textContent = "Nepodarilo sa";
+    setTimeout(() => (btn.textContent = old), 1500);
+  }
+}
+
+/**
+ * The image the scan read, as delivered: the live shot, or the file. With it a
+ * form that read badly can be read again elsewhere, or sent with the diagnostics.
+ */
+async function savePhoto(btn: HTMLElement): Promise<void> {
+  const old = btn.textContent;
+  try {
+    const src = state.source;
+    if (!src) throw new Error("no photo");
+    const blob = await new Promise<Blob>((ok, fail) => src.toBlob((b) => (b ? ok(b) : fail(new Error("toBlob"))), "image/jpeg", 0.92));
+    await saveFile(blob, `${fileStem()}-foto.jpg`, "Fotka poukazu");
   } catch {
     btn.textContent = "Nepodarilo sa";
     setTimeout(() => (btn.textContent = old), 1500);
@@ -1468,6 +1488,7 @@ function wire(): void {
   $("btn-share").hidden = typeof navigator.share !== "function";
   $("btn-share").addEventListener("click", (e) => void shareLink(e.currentTarget as HTMLElement));
   $("btn-save-qr").addEventListener("click", (e) => void saveQr(e.currentTarget as HTMLElement));
+  $("btn-save-photo").addEventListener("click", (e) => void savePhoto(e.currentTarget as HTMLElement));
   $("btn-copy-diag").addEventListener("click", (e) => void copy($("diag").textContent ?? "", e.currentTarget as HTMLElement));
   $("btn-again").addEventListener("click", () => show("start"));
 

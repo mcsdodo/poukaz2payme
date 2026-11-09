@@ -6,6 +6,7 @@
 - camera: on Android the live view goes fullscreen and turns to landscape, where the form is larger in the frame
 
 ### Added
+- app: the photo a scan read can be saved to the phone ("Uložiť fotku")
 - ocr: VS, KS, SS and the message are read from the form's fixed boxes; the two-line message now reads letter by letter, with accents
 
 ### Fixed
