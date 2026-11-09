@@ -87,7 +87,9 @@ export function segmentCells(img: Image, k: number): Tile[] {
     .filter((c) => {
       const cw = c.x1 - c.x0 + 1;
       const ch = c.y1 - c.y0 + 1;
-      return ch >= tallest * 0.5 && cw <= tallest * 1.5;
+      // Digits print at one height. A shape about half as tall is a piece of the
+      // label or of the next box (seen: three such pieces around VS 112613).
+      return ch >= tallest * 0.7 && cw <= tallest * 1.5;
     })
     .sort((a, b) => a.x0 - b.x0)
     .map((c) => {

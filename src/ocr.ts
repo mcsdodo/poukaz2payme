@@ -85,6 +85,8 @@ export async function ocrDigits(
 /** Thresholds to try, as a fraction of the paper brightness. Tested on the real form. */
 const CELL_THRESHOLDS = [0.5, 0.4, 0.6];
 const CELL_SCALE = 3;
+/** Crop height after scaling, in px. The digits are then about 85 px tall. */
+const CELL_CROP_HEIGHT = 230;
 const MIN_CELL_CONFIDENCE = 70;
 
 export interface BoxedRead {
@@ -132,9 +134,11 @@ export async function ocrBoxedDigits(
   const height = Math.min(canvas.height - top, Math.round(rect.y1 - rect.y0));
   if (width < 8 || height < 8) return { text: "", confidence: 0, attempts: [], partials: [] };
 
+  // Scale to a fixed crop height: at 3x a smaller photo gave 54 px digits, and a clean 1 read as 4.
+  const scale = Math.max(CELL_SCALE, CELL_CROP_HEIGHT / height);
   const crop = document.createElement("canvas");
-  crop.width = width * CELL_SCALE;
-  crop.height = height * CELL_SCALE;
+  crop.width = Math.round(width * scale);
+  crop.height = Math.round(height * scale);
   const ctx = crop.getContext("2d", { willReadFrequently: true })!;
   ctx.imageSmoothingQuality = "high";
   ctx.drawImage(canvas, left, top, width, height, 0, 0, crop.width, crop.height);

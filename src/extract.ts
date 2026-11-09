@@ -49,6 +49,8 @@ export interface ExtractResult {
   amountWords?: { text: string; euros: number; confidence: number };
   /** The "EUR" and "cent" labels of the boxed amount, for the cell pass. */
   amountColumns?: { eur: BBox; cent: BBox };
+  /** Two digits under a "cent" label: the cents, when the euros next to them were lost. */
+  centsBelowLabel?: Extracted;
   /** 48- or 50-digit runs, which may be the clear text under the barcode. */
   barcodeDigits: string[];
   /** The form template fit, when enough labels were read. */
@@ -175,7 +177,8 @@ function amountIn(s: string): string | undefined {
 function splitColumnAmount(lines: OcrLine[]): Extracted | undefined {
   const sorted = [...lines].sort((a, b) => a.bbox.x0 - b.bbox.x0);
   for (const left of sorted) {
-    const m = /^=?\s*(\d[\d\s]*)$/.exec(left.text);
+    // The rule under the stub amount reads as a trailing dot: "=37." and "50.".
+    const m = /^=?\s*(\d[\d\s]*?)\s*[.,_]?$/.exec(left.text);
     if (!m) continue;
     const euros = m[1].replace(/\s/g, "");
     if (euros.length > 7) continue;
@@ -194,13 +197,14 @@ function splitColumnAmount(lines: OcrLine[]): Extracted | undefined {
     const right = sorted.find(
       (r) =>
         r !== left &&
-        /^\d\s*\d$/.test(r.text) &&
+        /^\d\s*\d\s*[.,_]?$/.test(r.text) &&
         r.bbox.x0 >= left.bbox.x1 &&
-        r.bbox.x0 <= left.bbox.x1 + h * 6 &&
+        // The stub prints EUR and cent far apart: 6 line heights on one photo.
+        r.bbox.x0 <= left.bbox.x1 + h * 10 &&
         Math.abs((r.bbox.y0 + r.bbox.y1) / 2 - cy) <= h * 0.6,
     );
     if (!right) continue;
-    const value = `${euros},${right.text.replace(/\s/g, "")}`;
+    const value = `${euros},${right.text.replace(/\D/g, "")}`;
     if (!parseAmount(value)) continue;
     return {
       value,
@@ -236,6 +240,26 @@ function findAmountColumns(lines: OcrLine[]): ExtractResult["amountColumns"] {
       (l) => /^cent\W*$/.test(strip(l.text)) && row(eur.bbox, l.bbox) && l.bbox.x0 > eur.bbox.x1 && l.bbox.x0 < eur.bbox.x1 + w * 4,
     );
     if (cent) return { eur: eur.bbox, cent: cent.bbox };
+  }
+  return undefined;
+}
+
+/**
+ * Two digits right under a "cent" label, leftmost first. On one photo a rule
+ * crossed the stub's "=37" and OCR lost it, but read the "50" next to it at 96.
+ */
+function findCentsBelowLabel(lines: OcrLine[]): Extracted | undefined {
+  const labels = lines.filter((l) => !l.predicted && /^cent\W*$/.test(strip(l.text))).sort((a, b) => a.bbox.x0 - b.bbox.x0);
+  for (const label of labels) {
+    const h = label.bbox.y1 - label.bbox.y0;
+    const below = lines.find(
+      (l) =>
+        /^\d\s*\d\s*[.,_]?$/.test(l.text) &&
+        overlapsX(l.bbox, label.bbox) &&
+        l.bbox.y0 >= label.bbox.y1 &&
+        l.bbox.y0 - label.bbox.y1 <= h * 4,
+    );
+    if (below) return { value: below.text.replace(/\D/g, ""), confidence: below.confidence, bbox: below.bbox, labelBox: label.bbox };
   }
   return undefined;
 }
@@ -286,8 +310,13 @@ export function extractFields(ocrLines: OcrLine[]): ExtractResult {
       // An added label has no confidence of its own: the value line gives it.
       let confidence = label.confidence;
       if (!value) {
+        const labelH = label.bbox.y1 - label.bbox.y0;
         for (const right of linesRightOf(lines, label)) {
           if (isLabelText(right.text)) continue;
+          // The stub digits print taller than the label. A shorter line is half of a
+          // number cut by a form rule: one photo had VS 112613 on the line between
+          // the VS and SS rows, read as "453042" and "1120719", the second as an SS.
+          if (right.bbox.y1 - right.bbox.y0 < labelH * 0.8) continue;
           value = fits(wholeLineDigits(right.text, symbolMax[key]));
           if (value) {
             box = right.bbox;
@@ -342,6 +371,7 @@ export function extractFields(ocrLines: OcrLine[]): ExtractResult {
 
   res.amountWords = findAmountWords(lines);
   res.amountColumns = findAmountColumns(lines);
+  res.centsBelowLabel = findCentsBelowLabel(lines);
 
   for (const key of ["name", "message"] as const) {
     const label = lines.find((l) => LABELS[key].test(strip(l.text)));

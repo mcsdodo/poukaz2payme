@@ -10,6 +10,7 @@ import { rotatePoint, rotatedSize, zoneSkew, type Point } from "./deskew";
 import { decodeCanvas, isSteady, lastZxingError, nativeFormats, orientationFromCorners, warmUpBarcode, type BarcodeHit } from "./barcode";
 import { extractFields, type BBox, type Extracted, type ExtractResult } from "./extract";
 import { bankName, formatIban, isValidIban, normalizeIban, splitSkIban, isValidLegacyPart } from "./iban";
+import { flattenLight } from "./light";
 import { getOcrWorker, ocrBoxedDigits, ocrDigits, ocrPage, setOcrProgress } from "./ocr";
 import { buildBySquare, buildPaymeLink, formatAmount, parseAmount, PaymeError } from "./payme";
 import { completeKs, isKnownKsClass } from "./ks";
@@ -116,9 +117,51 @@ function rotateCanvas(src: HTMLCanvasElement, deg: number): HTMLCanvasElement {
   return c;
 }
 
+/** Width the form is scaled to for OCR. The real form read every field at 1930 px. */
+const FORM_WIDTH = 2200;
+/** The form is about this many code widths wide: 0.85 left of the code, 0.2 right. */
+const FORM_PER_CODE = 2.05;
+const MAX_FORM_UPSCALE = 3;
+
+/**
+ * Cuts the form out by the barcode, with a wide margin, and scales it so the
+ * form is FORM_WIDTH wide. A video frame or a photo from a distance puts the
+ * form at about 1000 px, where Tesseract lost almost every field; the same
+ * frame upscaled read the amount, KS and name. A large photo is not shrunk whole
+ * first, so the form keeps its pixels. `quad` is level, the code below the fields.
+ */
+function cropToForm(src: HTMLCanvasElement, quad: Point[]): { canvas: HTMLCanvasElement; note: string } {
+  const xs = quad.map((p) => p.x);
+  const ys = quad.map((p) => p.y);
+  const code = Math.max(...xs) - Math.min(...xs);
+  const x0 = Math.max(0, Math.floor(Math.min(...xs) - code * 1.15));
+  const x1 = Math.min(src.width, Math.ceil(Math.max(...xs) + code * 0.45));
+  const y0 = Math.max(0, Math.floor(Math.min(...ys) - code * 1.15));
+  const y1 = Math.min(src.height, Math.ceil(Math.max(...ys) + code * 0.35));
+  const scale = Math.min(MAX_FORM_UPSCALE, FORM_WIDTH / (code * FORM_PER_CODE));
+  const c = document.createElement("canvas");
+  c.width = Math.round((x1 - x0) * scale);
+  c.height = Math.round((y1 - y0) * scale);
+  const ctx = c.getContext("2d", { willReadFrequently: true })!;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(src, x0, y0, x1 - x0, y1 - y0, 0, 0, c.width, c.height);
+  return { canvas: c, note: `${x1 - x0}x${y1 - y0} of ${src.width}x${src.height}, scale ${scale.toFixed(2)}` };
+}
+
+/** A copy with the paper made evenly white, so a shadow does not black out half the form. */
+function flattenCanvas(src: HTMLCanvasElement): HTMLCanvasElement {
+  const c = canvasFrom(src, src.width, src.height, Infinity);
+  const ctx = c.getContext("2d", { willReadFrequently: true })!;
+  const img = ctx.getImageData(0, 0, c.width, c.height);
+  flattenLight(img);
+  ctx.putImageData(img, 0, 0);
+  return c;
+}
+
 /** Grayscale + contrast stretch, which helps Tesseract on phone photos. */
 function prepareForOcr(src: HTMLCanvasElement): HTMLCanvasElement {
-  const c = canvasFrom(src, src.width, src.height, 2400);
+  // Same size as the color image: the cell pass uses OCR boxes on it.
+  const c = canvasFrom(src, src.width, src.height, Infinity);
   const ctx = c.getContext("2d", { willReadFrequently: true })!;
   const img = ctx.getImageData(0, 0, c.width, c.height);
   const d = img.data;
@@ -289,6 +332,29 @@ function isPoukazHit(h: BarcodeHit): boolean {
   return !!p && (p.ibanValid || p.variant === "product37");
 }
 
+/** Below this many pixels on the longer side, a missed code is tried again at twice the size. */
+const UPSCALE_BELOW = 2400;
+
+/**
+ * Decodes, and when the poukaz code is missing on a small image, decodes again
+ * at twice the size. In a portrait 1080x1920 stream the code is about 460 px
+ * wide, under 2 px per bar module, and zxing never read it (138 frames in a
+ * row); at 1.5x it read every time. Corners come back in the input's pixels.
+ */
+async function decodePoukaz(canvas: HTMLCanvasElement): Promise<BarcodeHit[]> {
+  const hits = await decodeCanvas(canvas);
+  if (hits.some(isPoukazHit) || Math.max(canvas.width, canvas.height) >= UPSCALE_BELOW) return hits;
+  const big = document.createElement("canvas");
+  big.width = canvas.width * 2;
+  big.height = canvas.height * 2;
+  const ctx = big.getContext("2d", { willReadFrequently: true })!;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(canvas, 0, 0, big.width, big.height);
+  const more = await decodeCanvas(big);
+  if (!more.some(isPoukazHit)) return hits;
+  return more.map((h) => ({ ...h, position: h.position.map((p) => ({ x: p.x / 2, y: p.y / 2 })) }));
+}
+
 /**
  * Looks for the poukaz code in the video, at low resolution: the stream only
  * aims the shot. It shoots once the code reads twice in a row at the same
@@ -304,7 +370,7 @@ async function scanLoop(): Promise<void> {
     const frame = videoFrame(1920);
     if (frame) {
       frames++;
-      const hits = await decodeCanvas(frame).catch(() => [] as BarcodeHit[]);
+      const hits = await decodePoukaz(frame).catch(() => [] as BarcodeHit[]);
       if (!scanning) return;
       const good = hits.find(isPoukazHit);
       if (good && prev && isSteady(prev.position, good.position, frame.width)) {
@@ -347,7 +413,7 @@ async function shoot(fallback?: HTMLCanvasElement): Promise<void> {
     pauseCamera();
     if (still && fallback && still.source.startsWith("takePhoto")) {
       const check = canvasFrom(still.canvas, still.canvas.width, still.canvas.height, 2400);
-      const hits = await decodeCanvas(check).catch(() => [] as BarcodeHit[]);
+      const hits = await decodePoukaz(check).catch(() => [] as BarcodeHit[]);
       if (!hits.some(isPoukazHit)) still = { canvas: fallback, source: `video ${fallback.width}x${fallback.height} (the photo had no code: ${still.source})` };
     }
     if (!still) {
@@ -409,7 +475,9 @@ async function processImage(input: HTMLCanvasElement, extraRotation: number, cap
     step("barcode");
     setWork("Čítam čiarový kód...");
     let canvas = rotateCanvas(canvasFrom(input, input.width, input.height, 2400), extraRotation);
-    let hits = await decodeCanvas(canvas);
+    // The input's pixels per pixel of `canvas`, for the form crop at full resolution.
+    const detail = Math.max(input.width, input.height) / Math.max(canvas.width, canvas.height);
+    let hits = await decodePoukaz(canvas);
     // Positions are in the photo as delivered, for calibrating the field template later.
     diag.barcodeHits = hits.map((h) => ({
       engine: h.engine,
@@ -436,11 +504,17 @@ async function processImage(input: HTMLCanvasElement, extraRotation: number, cap
       const t = performance.now();
       const skew = measureSkew(canvas, quad);
       diag.skew = { degrees: skew, ms: Math.round(performance.now() - t) };
-      if (skew !== undefined && Math.abs(skew) >= MIN_SKEW) {
-        const turned = rotateCanvas(canvas, -skew);
-        // Keep the OCR and color canvases the same size: the cell pass uses OCR boxes on the color image.
-        canvas = canvasFrom(turned, turned.width, turned.height, 2400);
+      const tilt = skew !== undefined && Math.abs(skew) >= MIN_SKEW ? skew : 0;
+      // Turn the input at its full size, so the crop keeps every pixel the photo has.
+      let full = rotateCanvas(rotateCanvas(canvasFrom(input, input.width, input.height, Infinity), extraRotation), -a);
+      quad = quad.map((p) => ({ x: p.x * detail, y: p.y * detail }));
+      if (tilt) {
+        quad = quad.map((p) => rotatePoint(p, full.width, full.height, -tilt));
+        full = rotateCanvas(full, -tilt);
       }
+      const form = cropToForm(full, quad);
+      diag.formCrop = form.note;
+      canvas = form.canvas;
     }
     // Only the quarter turn: a reread measures the tilt again.
     state.rotation = rotation;
@@ -456,7 +530,9 @@ async function processImage(input: HTMLCanvasElement, extraRotation: number, cap
       if (status.startsWith("loading") || status.startsWith("initializ")) setWork(`OCR: ${status}...`, p);
       else if (status === "recognizing text") setWork("Čítam vytlačený text...", p);
     });
-    const ocrCanvas = prepareForOcr(canvas);
+    // Even out the light first: the cell pass reads the color image too.
+    const flat = flattenCanvas(canvas);
+    const ocrCanvas = prepareForOcr(flat);
     const page = await ocrPage(ocrCanvas);
     diag.ocrMs = page.ms;
     diag.ocrText = page.text;
@@ -479,7 +555,7 @@ async function processImage(input: HTMLCanvasElement, extraRotation: number, cap
     // 4. Digit-only second pass for empty symbol and amount fields.
     step("digits");
     setWork("Dočítavam číselné polia...");
-    await secondPass(ocrCanvas, canvas, ex, diag);
+    await secondPass(ocrCanvas, flat, ex, diag);
 
     diag.barcode = barcode;
     merge(barcode, ex, ocrCanvas);
@@ -565,6 +641,9 @@ function handleOtherCodes(hits: BarcodeHit[]): void {
   }
 }
 
+/** The digit pass under the SUMA label, when there are no amount words to check it against. */
+const MIN_AMOUNT_CONFIDENCE = 60;
+
 async function secondPass(
   ocrCanvas: HTMLCanvasElement,
   colorCanvas: HTMLCanvasElement,
@@ -590,7 +669,11 @@ async function secondPass(
       const rect: BBox = { x0: b.x0 - w * 0.15, y0: b.y1, x1: b.x1 + w * 0.6, y1: b.y1 + h * 3 };
       const r = await ocrDigits(ocrCanvas, rect, true);
       tries[key] = r;
-      if (parseAmount(r.text)) ex.amount = { value: r.text.replace(/^=/, ""), confidence: r.confidence * 0.8, bbox: rect, labelBox: b };
+      // Seen: "1" at confidence 17 for 37,50 in words. The words decide; without them, the confidence.
+      const cents = parseAmount(r.text.replace(/^=/, ""));
+      const words = ex.amountWords?.euros;
+      const agrees = words === undefined ? r.confidence >= MIN_AMOUNT_CONFIDENCE : cents !== undefined && Math.floor(cents / 100) === words;
+      if (cents && agrees) ex.amount = { value: r.text.replace(/^=/, ""), confidence: r.confidence * 0.8, bbox: rect, labelBox: b };
       continue;
     }
     // The crop starts inside the label on purpose: the label then touches the
@@ -599,7 +682,7 @@ async function secondPass(
     const rect: BBox = { x0: b.x0 - w * 0.15, y0: b.y1 - h * 0.6, x1: b.x1 + w * (key === "ks" ? 0.6 : 1.4), y1: b.y1 + h * 3 };
     // A single isolated shape is a reading that lost the rest (seen: VS "1" for 112606).
     const r = await ocrBoxedDigits(colorCanvas, rect, max, key === "ks" ? isKnownKsClass : undefined, key === "ks" ? 4 : 2);
-    tries[key] = r;
+    tries[key] = { ...r, rect: roundBox(rect) };
     if (r.text) {
       ex[key] = { value: r.text, confidence: r.confidence, bbox: rect, labelBox: b, predicted: f.predicted };
     } else if (key === "ks") {
@@ -634,9 +717,15 @@ async function readBoxedAmount(
   const centRect: BBox = { x0: cent.x0 - centW * 1.2, y0: top, x1: cent.x1 + centW * 0.4, y1: bottom };
   const euros = await ocrBoxedDigits(colorCanvas, eurRect, 7, words === undefined ? undefined : (t) => Number(t) === words);
   const cents = await ocrBoxedDigits(colorCanvas, centRect, 2, undefined, 2);
-  const tries = { euros, cents };
+  const tries = { euros: { ...euros, rect: roundBox(eurRect) }, cents: { ...cents, rect: roundBox(centRect) } };
   const bbox: BBox = { x0: eurRect.x0, y0: top, x1: centRect.x1, y1: bottom };
-  if (cents.text.length !== 2) return { tries };
+  if (cents.text.length !== 2) {
+    // The words with the cents OCR read under a "cent" label elsewhere, as the stub's.
+    const stub = ex.centsBelowLabel;
+    if (current !== undefined || words === undefined || !stub) return { tries };
+    const value = { value: `${words},${stub.value}`, confidence: Math.min(ex.amountWords!.confidence, stub.confidence), bbox: stub.bbox, filled: true };
+    return { tries: { ...tries, stubCents: stub.value }, value };
+  }
   if (words !== undefined && Number(euros.text) !== words) {
     // Unreadable euros with known words: the words give the euros. Never replace digits that exist.
     if (current !== undefined) return { tries };
@@ -644,6 +733,10 @@ async function readBoxedAmount(
   }
   if (!euros.text) return { tries };
   return { tries, value: { value: `${Number(euros.text)},${cents.text}`, confidence: Math.min(euros.confidence, cents.confidence), bbox } };
+}
+
+function roundBox(b: BBox): BBox {
+  return { x0: Math.round(b.x0), y0: Math.round(b.y0), x1: Math.round(b.x1), y1: Math.round(b.y1) };
 }
 
 function ocrLevel(conf: number): Level {

@@ -5,6 +5,7 @@ import { mod11CheckDigit, parsePoukazBarcode } from "../src/poukaz";
 import { buildBySquare, buildPaymeLink, parseAmount, toAscii } from "../src/payme";
 import { extractFields, findIban, type OcrLine } from "../src/extract";
 import { segmentCells } from "../src/cells";
+import { flattenLight } from "../src/light";
 import { fitLayout } from "../src/layout";
 import { rotatePoint, rotatedSize, zoneSkew } from "../src/deskew";
 import { isSteady } from "../src/barcode";
@@ -301,6 +302,20 @@ describe("OCR extraction rules", () => {
   it("needs a real digit, not only look-alikes", () => {
     expect(extractFields([line("KONŠT. SYMBOL l", 100, 100)]).ks?.value).toBe("");
   });
+  it("reads the stub amount when the rule under it reads as dots", () => {
+    const r = extractFields([line("=37.", 356, 648, 404, 663), line("50.", 491, 650, 520, 664)]);
+    expect(r.amount?.value).toBe("37,50");
+  });
+  it("finds the cents under a cent label, for the amount in words", () => {
+    const r = extractFields([line("cent", 506, 618, 535, 629), line("50", 491, 650, 520, 664)]);
+    expect(r.centsBelowLabel?.value).toBe("50");
+  });
+  it("does not take half of a number cut by a form rule", () => {
+    // VS 112613 printed on the rule between the VS and SS rows: two short fragments.
+    const label = line("ŠPECIFICKÝ SYMBOL", 60, 762, 223, 776);
+    expect(extractFields([label, line("1120719", 281, 762, 370, 771)]).ss?.value).toBe("");
+    expect(extractFields([label, line("112613", 281, 756, 370, 776)]).ss?.value).toBe("112613");
+  });
   it("does not take a short run as KS: it prints all 4 digits", () => {
     const r = extractFields([line("KONŠT. SYMBOL 1", 100, 100)]);
     expect(r.ks?.value).toBe("");
@@ -355,8 +370,48 @@ describe("segmentCells", () => {
     ]);
     expect(segmentCells(img, 0.5).map((t) => t.x)).toEqual([40]);
   });
+  it("drops a shape much shorter than the digits, a piece of a label or box", () => {
+    const img = page(200, 60, [
+      [40, 15, 55, 45],
+      [80, 30, 92, 44],
+      [120, 15, 135, 45],
+    ]);
+    expect(segmentCells(img, 0.5).map((t) => t.x)).toEqual([40, 120]);
+  });
   it("returns nothing for an empty crop", () => {
     expect(segmentCells(page(100, 40, []), 0.5)).toEqual([]);
+  });
+});
+
+describe("flattenLight", () => {
+  it("makes a shadowed page separable at one threshold", () => {
+    // Paper from 230 on the left to 90 in the shadow on the right; ink at 40% of the paper.
+    const w = 400;
+    const h = 100;
+    const paper = (x: number) => 230 - (140 * x) / w;
+    const isInk = (x: number, y: number) => x % 40 >= 17 && x % 40 < 23 && y >= 35 && y < 65;
+    const data = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const v = isInk(x, y) ? paper(x) * 0.4 : paper(x);
+        data.fill(v, (y * w + x) * 4, (y * w + x) * 4 + 3);
+        data[(y * w + x) * 4 + 3] = 255;
+      }
+    }
+    // Before: the shaded paper is darker than the ink in the light.
+    expect(paper(w - 1)).toBeLessThan(paper(0) * 0.4 + 10);
+    flattenLight({ data, width: w, height: h });
+    let maxInk = 0;
+    let minPaper = 255;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const v = data[(y * w + x) * 4];
+        if (isInk(x, y)) maxInk = Math.max(maxInk, v);
+        else minPaper = Math.min(minPaper, v);
+      }
+    }
+    expect(maxInk).toBeLessThan(130);
+    expect(minPaper).toBeGreaterThan(220);
   });
 });
 

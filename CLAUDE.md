@@ -54,6 +54,9 @@ everything. So OCR never gets a plain video frame when a photo is possible:
   shot that misses VS or amount offers it on the result screen. A browser opens the camera
   app only from a tap, so both are buttons. The stream is stopped first: an iPhone cannot
   share the camera.
+- In a portrait 1080x1920 stream the code is about 460 px wide, under 2 px per bar, and
+  zxing never read it. `decodePoukaz` in [main.ts](src/main.ts) decodes again at 2x when an
+  image under 2400 px has no poukaz code; at 1.5x it already read.
 - `diag.capture` says which path took the image (`takePhoto WxH`, `video ...` with the
   reason, or `file`). zxing alone is flaky at video resolution (the photo at 70% size did not
   decode, at 60% it did); Chrome on Android uses its native detector first.
@@ -68,6 +71,15 @@ everything. So OCR never gets a plain video frame when a photo is possible:
   text rows when the paper is photographed at an angle. So `zoneSkew` projects the vertical
   gradient of the zone onto rows and takes the sharpest profile. On the real photo turned by
   known angles it was within 0.06 degrees. zxing stops decoding past about 4 degrees.
+- **Lighting ([light.ts](src/light.ts)):** Tesseract binarizes the page at one threshold, so
+  the soft shadow of a phone over the form went solid black and OCR read almost nothing from
+  that half. `flattenLight` divides each pixel by the local paper brightness (block maximum,
+  max filter, blur). The cell pass reads the same flattened color image.
+- **Form crop:** after deskew the form is cut out by the barcode corners (the form is about
+  2.05 code widths wide) from the input at full size and scaled so the form is 2200 px wide.
+  `diag.formCrop` shows it. A form at 1000 px lost almost every field; the same frame
+  upscaled read most of them. Tesseract still varies with scale: one size loses the stub
+  amount, another the KS, so the readings below back each other up.
 - **Form template ([layout.ts](src/layout.ts)):** label positions of the real form after
   deskew. An affine fit maps them onto the labels OCR read (needs 4, usually gets 30), and
   each label OCR missed is added at its predicted place, so extract.ts finds its value as
@@ -104,11 +116,21 @@ everything. So OCR never gets a plain video frame when a photo is possible:
   - The euro part in words (`=Dvadsatosem=`, [amountwords.ts](src/amountwords.ts)) is an
     independent reading. It confirms the digits, flags a mismatch, and, when the digits are
     missing, supplies the euros next to the boxed cents, flagged low. The words hold no cents.
+    When the boxed cents fail too, two digits under the stub's `cent` label stand in
+    (`centsBelowLabel`).
+  - On one real form the stub VS was printed on the rule between the VS and SS rows. OCR
+    split it into two short lines and took the lower one as an SS. A stub value line shorter
+    than 0.8 of its label is a fragment and is skipped. The rule under the stub amount can
+    read as a trailing dot (`=37.`, `50.`).
   - A boxed field that page OCR cannot read goes to the cell pass ([cells.ts](src/cells.ts),
     `ocrBoxedDigits`): it isolates each printed character and reads it alone. A result counts
     only when every character has confidence >= 70, and only with enough characters: 4 for KS
     (it prints leading zeros), 2 for VS and SS. A smaller photo gave a confident VS `1` for
-    112606 when one shape survived the threshold.
+    112606 when one shape survived the threshold. A shape under 0.7 of the tallest is a piece
+    of the label or the next box, not a digit. The crop is scaled to 230 px tall: at a fixed
+    3x a small photo gave 54 px digits and a clean `1` read as `4` at 90.
+  - The digit pass under the SUMA label must agree with the amount in words (it once gave
+    `1` at confidence 17 for 37 in words), or have confidence >= 60 without words.
 - **Tesseract traps:** a character tile needs a wide white margin (at 14 px a clean `9`
   returned nothing), and each page mode returns nothing for some clean characters, so
   `ocrBoxedDigits` tries three modes per character.
