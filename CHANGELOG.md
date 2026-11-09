@@ -2,6 +2,10 @@
 
 ## [2026-11-09]
 
+### Fixed
+- ocr: portrait photos read VS and KS right; the box grid no longer lands one box out
+- ocr: a caron touching its letter is kept (MŠ), and rule scraps no longer read as a hyphen or a letter
+
 ### Removed
 - app: the live camera view. The phone's camera app, opened by "Odfotiť poukaz", is the only way to take the photo: its photos read every field where live shots read little
 

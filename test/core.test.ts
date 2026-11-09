@@ -481,7 +481,7 @@ describe("gridTiles", () => {
     [at(11) + 10, 0, at(11) + 13, 100], // the column's rule
     [at(7) + 2, 50, at(7) + 4, 52], // dust in an empty box
   ]);
-  const tiles = gridTiles(img, cells, 0.5);
+  const tiles = gridTiles(img, cells, 0.5).tiles;
   it("puts each character in its box, empty boxes as null", () => {
     expect(tiles.map((t) => (t ? "x" : "_")).join("")).toBe("xxxx_______x");
   });
@@ -497,6 +497,19 @@ describe("gridTiles", () => {
   });
   it("keeps the hyphen as a flat mark", () => {
     expect(tiles[2]!.aspect).toBeGreaterThan(2);
+  });
+});
+
+describe("gridTiles when the fit is off by more than half a box", () => {
+  // Six full boxes, 40 px each, the printed characters 24 px left of the boxes' middles. The
+  // nearest-box nudge alone moves the grid the other way and leaves the first character
+  // outside it (seen: VS lost its last digit to the KS boxes on a portrait photo).
+  const cells = Array.from({ length: 6 }, (_, i) => ({ x0: 60 + i * 40, y0: 20, x1: 100 + i * 40, y1: 80 }));
+  const ink = Array.from({ length: 6 }, (_, i) => [60 + i * 40 + 20 - 24 - 7, 40, 60 + i * 40 + 20 - 24 + 7, 66] as [number, number, number, number]);
+  const { tiles } = gridTiles(page(400, 100, ink), cells, 0.5);
+  it("keeps every character in the grid, box for box", () => {
+    expect(tiles.every(Boolean)).toBe(true);
+    expect(tiles.map((t) => Math.round(t!.center))).toEqual(ink.map((r) => (r[0] + r[2]) / 2 - 0.5 + 0.5));
   });
 });
 

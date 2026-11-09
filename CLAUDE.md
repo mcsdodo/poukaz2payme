@@ -77,8 +77,8 @@ caused most of the camera trouble. Two things learnt from it still matter for ph
   the one wide flat band of steep edges across and none down; within 3 px of zxing's ends on
   a sharp photo at 1000 px). The form is then cut out and read, the IBAN can come from the
   digits under the bars, and with too few labels for a fit the template is placed by the
-  code alone (`layoutFromCode`, `CODE_BOX`): VS and KS are then flagged, SS is skipped (the
-  grid sat a row low once and read the reference number). A soft photo prints grey, so the
+  code alone (`layoutFromCode`, `CODE_BOX`): VS, KS and SS are then not read (the SS grid
+  sat a row low once and read the reference number, VS came out `128101`). A soft photo prints grey, so the
   cell threshold moves up when the crop has contrast but no ink below it.
 - A small photo (under 2400 px) with no decodable code is decoded again at 2x
   (`decodePoukaz`): at 460 px across the code zxing never read it, at 1.5x it did.
@@ -136,6 +136,20 @@ caused most of the camera trouble. Two things learnt from it still matter for ph
   - Digits use the same grid at three thresholds, voted per box (`ocrGridDigits`). Where
     the grid read part of a field (`112?13`), the label-based fallback must fit that
     pattern: on a 970 px frame it read `1126130`.
+  - **The grid can land a whole box out.** The nudge picks the nearest box, so a fit off by
+    about half a box (15 px on a portrait photo) put the VS/KS grid one box left: VS read
+    `11261`, KS `3017`. So VS and KS are read as one row of 14 boxes (they print as one; KS
+    fills its 4), the crop reaches 1.6 boxes past the grid, and `gridTiles` also tries one box
+    left and right and keeps the placement that leaves no character-shaped ink outside. Only
+    character-shaped ink counts: the KS bracket's stroke `┐` once pulled the grid a box the
+    wrong way. The first threshold places the grid and the others keep it (`gridOffset`):
+    placed on their own, two readings sat a box apart and the vote mixed them.
+  - A letter clearly taller than the row's capitals (Š at 55 px against 44) carries its
+    accent even when it touches the letter. A hyphen must sit at mid-letter height (a flat
+    scrap of a rule at the foot read as one). A bare bar, or an unreadable box, with nothing
+    on either side is a stub of a rule, not a letter.
+  - Placed by the barcode alone, VS, KS and SS are not read (a soft shot gave VS `128101`),
+    and a message with more than a tenth of its boxes unreadable is dropped.
   - The name stays label-based with the vote: fixed name boxes picked up the address's
     second line when the fit was off.
   - On both photos at all sizes the message reads `MŠ-Malé,RICHARD LAČNÝ`, except at

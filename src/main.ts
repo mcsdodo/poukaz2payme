@@ -614,29 +614,37 @@ async function readFixedFields(colorCanvas: HTMLCanvasElement, ex: ExtractResult
   const fit = ex.fit;
   if (!fit) return;
   const tries: Record<string, unknown> = {};
-  // Placed by the barcode alone, the grids can sit a row off: on one soft shot the SS grid
-  // read the reference number below it. SS is left out then, VS and KS are flagged.
+  // Placed by the barcode alone (a photo too soft for its labels), the grids can sit a row
+  // off, and the digits are too soft to trust: the SS grid read the reference number below
+  // it, and VS came out 128101 for 112613. VS, KS and SS are left to the user then.
   const rough = !ex.layout?.anchors;
 
-  // VS from its boxes. The stub's copy, when OCR read it, is the second opinion.
+  // VS and KS print as one row of 14 boxes: read as one, a grid placed a box out shows as a
+  // digit outside it (gridTiles), which VS alone, with KS's digits next to it, would not.
+  // The KS fills its 4 boxes; VS prints right-aligned in its 10.
   const vsCells = gridCells(fit, FIELDS.vs);
-  const vs = await ocrGridDigits(colorCanvas, vsCells, undefined, 2);
-  tries.vs = vs.attempts;
-  ex.patterns = {};
-  if (!vs.text && vs.pattern) ex.patterns.vs = vs.pattern;
-  if (vs.text) {
-    const stub = ex.vs?.value;
-    ex.vs = { value: vs.text, confidence: stub && stub !== vs.text ? Math.min(vs.confidence, 60) : vs.confidence, bbox: union(vsCells), other: stub && stub !== vs.text ? stub : undefined, predicted: rough };
-  }
-
   const ksCells = gridCells(fit, FIELDS.ks);
-  const ks = await ocrGridDigits(colorCanvas, ksCells, isKnownKsClass, 4);
-  tries.ks = ks.attempts;
-  if (!ks.text && ks.pattern) ex.patterns.ks = ks.pattern;
-  if (ks.text) ex.ks = { value: ks.text, confidence: ks.confidence, bbox: union(ksCells), predicted: rough };
-  else {
-    const value = ks.partials.map(completeKs).find(Boolean);
+  const row = rough ? { attempts: ["skipped: placed by the barcode alone"], confidence: 0, boxes: [] as (string | null | undefined)[] } : await ocrGridDigits(colorCanvas, [...vsCells, ...ksCells]);
+  tries.vsks = row.attempts;
+  ex.patterns = {};
+  // With one box of the 14 unreadable the row reports 0; each digit read passed 70 alone.
+  const conf = row.confidence || 70;
+  const part = (from: number, to: number) => (row.boxes ?? []).slice(from, to).filter((b) => b !== undefined);
+  const vsBoxes = part(0, vsCells.length);
+  const ksBoxes = part(vsCells.length, vsCells.length + ksCells.length);
+  const vsText = vsBoxes.includes(null) ? "" : vsBoxes.join("");
+  if (vsText.length >= 2) {
+    const stub = ex.vs?.value;
+    const differs = !!stub && stub !== vsText;
+    ex.vs = { value: vsText, confidence: differs ? Math.min(conf, 60) : conf, bbox: union(vsCells), other: differs ? stub : undefined, predicted: rough };
+  } else if (vsBoxes.length) ex.patterns.vs = vsBoxes.map((b) => b ?? "?").join("");
+  const ksText = ksBoxes.includes(null) ? "" : ksBoxes.join("");
+  if (ksText.length === 4) {
+    ex.ks = { value: ksText, confidence: isKnownKsClass(ksText) ? conf : Math.min(conf, 60), bbox: union(ksCells), predicted: rough };
+  } else if (ksBoxes.length === 4) {
+    const value = completeKs(ksBoxes.map((b) => b ?? null));
     if (value) ex.ks = { value, confidence: 40, bbox: union(ksCells), filled: true };
+    else ex.patterns.ks = ksBoxes.map((b) => b ?? "?").join("");
   }
 
   if (!ex.ss?.value && !rough) {
@@ -653,7 +661,9 @@ async function readFixedFields(colorCanvas: HTMLCanvasElement, ex: ExtractResult
   for (const g of FIELDS.message) rows.push(await ocrGridText(colorCanvas, gridCells(fit, g)));
   tries.message = rows.map((r) => `${r.boxes} (${r.shapes})`);
   const message = rows.map((r) => r.text).join("").replace(/\s+/g, " ").trim();
-  if ((message.match(/\p{L}/gu) ?? []).length >= 2) {
+  // Mostly unreadable boxes ("A ??-k A?NT") are noise, not a message to check.
+  const unreadable = (message.match(/\?/g) ?? []).length;
+  if ((message.match(/\p{L}/gu) ?? []).length >= 2 && unreadable <= Math.max(1, message.length * 0.1)) {
     const area = union(FIELDS.message.flatMap((g) => gridCells(fit, g)));
     ex.message = { value: message, confidence: Math.min(...rows.map((r) => r.confidence)), bbox: area };
   }

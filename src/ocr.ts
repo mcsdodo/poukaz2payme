@@ -2,7 +2,7 @@
 // into /vendor at build time (scripts/copy-assets.mjs). Nothing leaves the device.
 
 import { createWorker, OEM, PSM, type Worker } from "tesseract.js";
-import { gridTiles, segmentCells, voteCells, type CellReading, type GridTile } from "./cells";
+import { gridTiles, segmentCells, voteCells, voteCellsAt, type CellReading, type GridTile } from "./cells";
 import { accented } from "./text";
 import type { BBox, OcrLine } from "./extract";
 
@@ -127,6 +127,8 @@ export interface BoxedRead {
   threshold?: number;
   /** The grid's voted digits with "?" where unreadable: a fallback reading must fit it. */
   pattern?: string;
+  /** Per box: the digit, null when unreadable, undefined when empty (ocrGridDigits only). */
+  boxes?: (string | null | undefined)[];
   attempts: string[];
   /** Readings with every character found but some unreadable, as null. */
   partials: (string | null)[][];
@@ -249,8 +251,9 @@ function cropGrid(canvas: HTMLCanvasElement, cells: BBox[]): { img: ImageData; c
   const h = bottom - top;
   // A margin around the grid: shapes cut by the crop's edge are dropped, so a letter
   // the fit placed a little outside its boxes must still be whole in the crop.
-  const left = Math.max(0, Math.floor(cells[0].x0 - pitch * 0.6));
-  const right = Math.min(canvas.width, Math.ceil(cells[cells.length - 1].x1 + pitch * 0.6));
+  // 1.6 boxes: a grid placed a box out must see the letters it would leave outside (gridTiles).
+  const left = Math.max(0, Math.floor(cells[0].x0 - pitch * 1.6));
+  const right = Math.min(canvas.width, Math.ceil(cells[cells.length - 1].x1 + pitch * 1.6));
   const y0 = Math.max(0, Math.floor(top - h * 0.3));
   const y1 = Math.min(canvas.height, Math.ceil(bottom + h * 0.3));
   if (right - left < 8 || y1 - y0 < 8) return undefined;
@@ -294,8 +297,13 @@ export async function ocrGridDigits(
   const readings: (CellReading & { k: number; confidence: number })[] = [];
   const complete = (r: CellReading) => r.cells.every((c) => c.ch !== null);
   const textOf = (r: CellReading) => r.cells.map((c) => c.ch ?? "?").join("");
+  // The first threshold places the grid; the others keep that placement, so their readings
+  // stay box for box (placed on their own, two of three once sat a box apart).
+  let gridOffset: number | undefined;
   for (const k of CELL_THRESHOLDS) {
-    const tiles = gridTiles(crop.img, crop.cells, k);
+    const grid = gridTiles(crop.img, crop.cells, k, gridOffset);
+    gridOffset ??= grid.offset;
+    const tiles = grid.tiles;
     const reading: CellReading & { k: number; confidence: number } = { k, confidence: 100, cells: [] };
     for (let i = 0; i < tiles.length; i++) {
       const t = tiles[i];
@@ -312,15 +320,18 @@ export async function ocrGridDigits(
     const done = readings.filter(complete);
     if (done.length >= 2 && done.every((r) => textOf(r) === textOf(done[0])) && plausible(textOf(done[0]))) break;
   }
-  const voted = voteCells(readings);
+  const placed = voteCellsAt(readings);
+  const voted = placed.map((p) => p.ch);
+  const boxes: (string | null | undefined)[] = cells.map(() => undefined);
+  for (const p of placed) boxes[Math.round(p.center / 100)] = p.ch;
   const partials = voted.includes(null) && voted.length === cells.length ? [voted] : [];
   const text = voted.includes(null) ? "" : voted.join("");
   const pattern = voted.map((c) => c ?? "?").join("") || undefined;
   if (readings.length > 1) attempts.push(`vote: ${pattern ?? ""}`);
-  if (!text || text.length < minLen) return { text: "", confidence: 0, pattern, attempts, partials };
+  if (!text || text.length < minLen) return { text: "", confidence: 0, pattern, boxes, attempts, partials };
   const agreeing = readings.filter((r) => complete(r) && textOf(r) === text);
   const confidence = agreeing.length ? Math.max(...agreeing.map((r) => r.confidence)) : MIN_CELL_CONFIDENCE;
-  return { text, confidence, threshold: agreeing[0]?.k, pattern, attempts, partials };
+  return { text, confidence, threshold: agreeing[0]?.k, pattern, boxes, attempts, partials };
 }
 
 const LETTERS = "AÁÄBCČDĎEÉFGHIÍJKLĹĽMNŇOÓÔPQRŔSŠTŤUÚVWXYÝZŽaáäbcčdďeéfghiíjklĺľmnňoóôpqrŕsštťuúvwxyýzž0123456789";
@@ -358,7 +369,7 @@ export interface GridText {
 export async function ocrGridText(canvas: HTMLCanvasElement, cells: BBox[]): Promise<GridText> {
   const crop = cropGrid(canvas, cells);
   if (!crop) return { text: "", confidence: 0, boxes: "", shapes: "" };
-  const tiles = gridTiles(crop.img, crop.cells, 0.5);
+  const tiles = gridTiles(crop.img, crop.cells, 0.5).tiles;
   const heights = tiles.filter((t): t is GridTile => !!t).map((t) => t.mainHeight).sort((a, b) => a - b);
   // Capitals are the tallest shapes of the row (accents are separate shapes, so they do not count).
   const cap = heights.length ? heights[Math.floor((heights.length - 1) * 0.9)] : 0;
@@ -379,8 +390,12 @@ export async function ocrGridText(canvas: HTMLCanvasElement, cells: BBox[]): Pro
       continue;
     }
     // A bare vertical bar: Tesseract returns nothing for it alone. l or I, the neighbours decide.
+    // With no letter on either side it is a stub of a rule (the column's border, 5x55 in the
+    // last box of an empty row end), not a one-letter word.
     if (t.parts === 1 && t.mainWidth <= t.mainHeight * 0.25) {
-      chars.push({ ch: "I", confidence: 80 });
+      const i = chars.length;
+      const lone = !tiles[i - 1] && !tiles[i + 1];
+      chars.push(lone ? { ch: " ", confidence: 100 } : { ch: "I", confidence: 80 });
       continue;
     }
     const r = await readLetter(w, tileCanvas(t));
@@ -392,8 +407,17 @@ export async function ocrGridText(canvas: HTMLCanvasElement, cells: BBox[]): Pro
     let ch = SAME_SHAPE.has(r.ch.toLowerCase()) ? (lower ? r.ch.toLowerCase() : r.ch.toUpperCase()) : r.ch;
     // Tesseract reads a lone é as e and Ý as Y. The cut-out knows there is a mark above
     // the letter: a vowel takes an acute, a consonant a caron. Accents are only added.
-    if (t.marks && ch.normalize("NFD").length === 1) ch = accented(ch, t.marks);
+    // A caron touching its letter is no separate mark, but the letter stands taller than the
+    // row's capitals (Š at 55 px against 44): the accent is there all the same.
+    const marks = t.marks || (t.mainHeight > cap * 1.15 ? 1 : 0);
+    if (marks && ch.normalize("NFD").length === 1) ch = accented(ch, marks);
     chars.push({ ch, confidence: r.confidence, lower });
+  }
+  // An unreadable box between empty ones (or the row's end) is a stub of a rule or a speck,
+  // not a letter of the message: the column's border left one in the last box of a row.
+  for (let i = 0; i < chars.length; i++) {
+    const blank = (c?: { ch: string }) => !c || c.ch === " ";
+    if (chars[i].ch === "?" && blank(chars[i - 1]) && blank(chars[i + 1])) chars[i] = { ch: " ", confidence: 100 };
   }
   // l and I are one shape in this font: the letters next to it decide (Malé, RICH).
   const isLetter = (c: string) => /\p{L}/u.test(c) && !"lI".includes(c);

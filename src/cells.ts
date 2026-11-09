@@ -29,6 +29,11 @@ export interface CellReading {
  * agree on; a tie between two different characters is unreadable, never a guess.
  */
 export function voteCells(readings: CellReading[]): (string | null)[] {
+  return voteCellsAt(readings).map((p) => p.ch);
+}
+
+/** voteCells with the place of each result: the middle of its characters' centers. */
+export function voteCellsAt(readings: CellReading[]): { center: number; ch: string | null }[] {
   const all = readings.flatMap((r, i) => r.cells.map((c) => ({ ...c, reading: i })));
   if (!all.length) return [];
   const heights = all.map((c) => c.inkHeight).sort((a, b) => a - b);
@@ -41,7 +46,7 @@ export function voteCells(readings: CellReading[]): (string | null)[] {
     else places.push([c]);
   }
   const complete = readings.map((r) => r.cells.every((c) => c.ch !== null));
-  const out: (string | null)[] = [];
+  const out: { center: number; ch: string | null }[] = [];
   for (const place of places) {
     const seen = new Set(place.map((c) => c.reading));
     if (seen.size * 2 < readings.length) {
@@ -52,7 +57,8 @@ export function voteCells(readings: CellReading[]): (string | null)[] {
     const counts = new Map<string, number>();
     for (const c of place) if (c.ch) counts.set(c.ch, (counts.get(c.ch) ?? 0) + 1);
     const ranked = [...counts].sort((a, b) => b[1] - a[1]);
-    out.push(ranked.length && (ranked.length === 1 || ranked[0][1] > ranked[1][1]) ? ranked[0][0] : null);
+    const center = place.reduce((sum, c) => sum + c.center, 0) / place.length;
+    out.push({ center, ch: ranked.length && (ranked.length === 1 || ranked[0][1] > ranked[1][1]) ? ranked[0][0] : null });
   }
   return out;
 }
@@ -264,8 +270,14 @@ export interface GridTile extends Tile {
  * accent or a caron stays with its letter (Š, é). Shapes outside the grid are
  * the next field (KS's first 0 next to the VS boxes), and are not read.
  */
-export function gridTiles(img: Image, cells: { x0: number; y0: number; x1: number; y1: number }[], k: number): (GridTile | null)[] {
-  if (!cells.length) return [];
+export function gridTiles(
+  img: Image,
+  cells: { x0: number; y0: number; x1: number; y1: number }[],
+  k: number,
+  /** The placement an earlier threshold chose: readings at several thresholds must stay box-aligned. */
+  placed?: number,
+): { tiles: (GridTile | null)[]; offset: number } {
+  if (!cells.length) return { tiles: [], offset: 0 };
   const { width: w } = img;
   const pitch = (cells[cells.length - 1].x1 - cells[0].x0) / cells.length;
   const top = Math.min(...cells.map((c) => c.y0));
@@ -306,7 +318,10 @@ export function gridTiles(img: Image, cells: { x0: number; y0: number; x1: numbe
     if (letters.includes(c)) return true;
     if (tallish.includes(c)) return false;
     const { w: cw, h: ch } = size(c);
-    if (cw >= cellH * 0.1 && cw >= ch * 2 && c.area >= cellH * 0.3) return besideLetter(c);
+    // A hyphen sits at mid-letter height; a flat scrap of a rule at the letters' foot was read
+    // as one ("RICHARD-LAČNÝ" for an empty box).
+    const dashHeight = mid(c).y <= foot - typical * 0.2 && mid(c).y >= foot - typical * 0.75;
+    if (cw >= cellH * 0.1 && cw >= ch * 2 && c.area >= cellH * 0.3) return besideLetter(c) && dashHeight;
     if (c.area < 8) return false;
     const accent = letters.some((l) => {
       const lw = l.x1 - l.x0;
@@ -320,13 +335,27 @@ export function gridTiles(img: Image, cells: { x0: number; y0: number; x1: numbe
   const offsets = letters
     .map((c) => mid(c).x - centerOf(Math.min(cells.length - 1, Math.max(0, nearest(mid(c).x)))))
     .sort((a, b) => a - b);
-  const offset = offsets.length ? offsets[offsets.length >> 1] : 0;
+  const median = offsets.length ? offsets[offsets.length >> 1] : 0;
+  // The nudge picks the nearest box, so a fit off by about half a box can land one box out:
+  // on a portrait photo the VS/KS grid sat a box left, VS lost its last digit and KS read the
+  // VS's 3. The placement that leaves the fewest letters outside the grid wins; on a tie the
+  // nudge stands. The crop reaches 1.6 boxes past the grid, so such letters are seen.
+  // Only character-shaped ink counts: the bracket strokes at the row's ends (the KS's ┐)
+  // are thinner and taller than any digit, and once pulled the grid a box the wrong way.
+  const charLike = letters.filter((c) => size(c).w >= size(c).h * 0.2 && size(c).h <= typical * 1.25);
+  const outside = (o: number) => charLike.filter((c) => {
+    const i = nearest(mid(c).x - o);
+    return i < 0 || i >= cells.length;
+  }).length;
+  let offset = median;
+  for (const o of [median - pitch, median + pitch]) if (outside(o) < outside(offset)) offset = o;
+  if (placed !== undefined) offset = placed;
   const boxes: Component[][] = cells.map(() => []);
   for (const c of shapes) {
     const i = nearest(mid(c).x - offset);
     if (i >= 0 && i < cells.length) boxes[i].push(c);
   }
-  return boxes.map((parts) => {
+  const tiles = boxes.map((parts) => {
     if (!parts.length) return null;
     const t = tileOf(label, w, parts);
     const main = parts.reduce((a, b) => (b.y1 - b.y0 > a.y1 - a.y0 ? b : a));
@@ -335,4 +364,5 @@ export function gridTiles(img: Image, cells: { x0: number; y0: number; x1: numbe
     const marks = parts.filter((c) => c !== main && c.y1 <= main.y0 + 3).length;
     return { ...t, mainHeight: main.y1 - main.y0 + 1, mainWidth: main.x1 - main.x0 + 1, marks, parts: parts.length, middle: (y0 + y1) / 2 };
   });
+  return { tiles, offset };
 }
