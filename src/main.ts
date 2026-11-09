@@ -11,6 +11,7 @@ import { decodeCanvas, isSteady, lastZxingError, nativeFormats, orientationFromC
 import { extractFields, type BBox, type Extracted, type ExtractResult } from "./extract";
 import { bankName, formatIban, isValidIban, normalizeIban, splitSkIban, isValidLegacyPart } from "./iban";
 import { flattenLight } from "./light";
+import { locateBarcode } from "./locate";
 import { getOcrWorker, ocrBoxedDigits, ocrDigits, ocrGridDigits, ocrGridText, ocrLine, ocrPage, setOcrProgress } from "./ocr";
 import { FIELDS, gridCells } from "./layout";
 import { consensus, type Reading } from "./vote";
@@ -173,7 +174,7 @@ const MAX_FORM_UPSCALE = 3;
  * frame upscaled read the amount, KS and name. A large photo is not shrunk whole
  * first, so the form keeps its pixels. `quad` is level, the code below the fields.
  */
-function cropToForm(src: HTMLCanvasElement, quad: Point[]): { canvas: HTMLCanvasElement; note: string } {
+function cropToForm(src: HTMLCanvasElement, quad: Point[]): { canvas: HTMLCanvasElement; note: string; code: BBox } {
   const xs = quad.map((p) => p.x);
   const ys = quad.map((p) => p.y);
   const code = Math.max(...xs) - Math.min(...xs);
@@ -204,7 +205,12 @@ function cropToForm(src: HTMLCanvasElement, quad: Point[]): { canvas: HTMLCanvas
   ctx.imageSmoothingQuality = "high";
   ctx.drawImage(src, x0, y0, x1 - x0, y1 - y0, left * scale, top * scale, (x1 - x0) * scale, (y1 - y0) * scale);
   const pads = [left, top, right, bottom].map((p) => Math.round(p * scale)).join("/");
-  return { canvas: c, note: `${x1 - x0}x${y1 - y0} of ${src.width}x${src.height}, scale ${scale.toFixed(2)}, white l/t/r/b ${pads}` };
+  // The code in the crop's pixels, for placing the template when OCR reads too few labels.
+  const at = (x: number, y: number) => ({ x: (x - x0 + left) * scale, y: (y - y0 + top) * scale });
+  const tl = at(Math.min(...xs), Math.min(...ys));
+  const br = at(Math.max(...xs), Math.max(...ys));
+  const note = `${x1 - x0}x${y1 - y0} of ${src.width}x${src.height}, scale ${scale.toFixed(2)}, white l/t/r/b ${pads}`;
+  return { canvas: c, note, code: { x0: tl.x, y0: tl.y, x1: br.x, y1: br.y } };
 }
 
 /** A copy with the paper made evenly white, so a shadow does not black out half the form. */
@@ -242,6 +248,24 @@ function prepareForOcr(src: HTMLCanvasElement): HTMLCanvasElement {
   }
   ctx.putImageData(img, 0, 0);
   return c;
+}
+
+/** Below this share of the image width a "code" is too small to be the poukaz's. */
+const MIN_LOCATED_CODE = 0.12;
+
+/** The poukaz code's corners found by its look, without decoding (locate.ts), or undefined. */
+function findCode(canvas: HTMLCanvasElement): Point[] | undefined {
+  const small = canvasFrom(canvas, canvas.width, canvas.height, 1000);
+  const s = canvas.width / small.width;
+  const box = locateBarcode(small.getContext("2d", { willReadFrequently: true })!.getImageData(0, 0, small.width, small.height));
+  release(small);
+  if (!box || (box.x1 - box.x0) * s < canvas.width * MIN_LOCATED_CODE) return undefined;
+  return [
+    { x: box.x0 * s, y: box.y0 * s },
+    { x: box.x1 * s, y: box.y0 * s },
+    { x: box.x1 * s, y: box.y1 * s },
+    { x: box.x0 * s, y: box.y1 * s },
+  ];
 }
 
 /** Smallest tilt worth a resample. 0.2 degrees moves a row 7 px across a 2000 px photo. */
@@ -293,6 +317,13 @@ let torchOn = false;
  */
 const canTakePhoto = "ImageCapture" in window;
 const isPhone = matchMedia("(pointer: coarse)").matches;
+/** Width of the code as a share of the frame's: at 0.3 the form fills about 65% of the frame. */
+const MIN_CODE_SHARE = 0.3;
+
+function codeShare(q: { x: number; y: number }[], frameWidth: number): number {
+  return Math.hypot(q[1].x - q[0].x, q[1].y - q[0].y) / frameWidth;
+}
+
 /** Two reads of the code at one place within this time are a phone held still. */
 const STEADY_WINDOW_MS = 1500;
 /** After this long without a code, offer the phone's own camera app. */
@@ -506,11 +537,15 @@ async function scanLoop(): Promise<void> {
       frames++;
       const hits = await decodePoukaz(frame).catch(() => [] as BarcodeHit[]);
       if (!scanning) return;
-      const good = hits.find(isPoukazHit);
+      const found = hits.find(isPoukazHit);
+      // Too far: the photo's still lens sees more than the stabilized video (two shots had
+      // the code at 28-30% of the photo, too soft to decode or read). Only a near code shoots.
+      const share = found ? codeShare(found.position, frame.width) : 0;
+      const good = share >= MIN_CODE_SHARE ? found : undefined;
       const now = performance.now();
       if (good && prev && now - prev.at <= STEADY_WINDOW_MS && isSteady(prev.hit.position, good.position, frame.width)) {
         // The frame at full stream size is the fallback if the photo misses the code.
-        await shoot(videoFrame(3200) ?? undefined);
+        await shoot(videoFrame(3200) ?? undefined, share);
         return;
       }
       if (good) {
@@ -520,6 +555,8 @@ async function scanLoop(): Promise<void> {
       const other = hits.find((h) => h.format !== "Code128");
       $("cam-status").textContent = good
         ? "Kód prečítaný, držte telefón v pokoji..."
+        : found
+          ? `Priblížte telefón k poukazu (kód má ${Math.round(share * 100)} % šírky, treba ${Math.round(MIN_CODE_SHARE * 100)} %).`
         : other
           ? `Vidím ${other.format}, hľadám čiarový kód poukazu...`
           : hits.length
@@ -540,7 +577,16 @@ async function scanLoop(): Promise<void> {
  * takePhoto lags by up to a second, and a phone lowered too early gives a photo
  * without the form, so the photo must contain the code too.
  */
-async function shoot(fallback?: HTMLCanvasElement): Promise<void> {
+/**
+ * The photo must put at least this many times the video's pixels on the code to be used.
+ * Android's still capture sees the whole sensor while the 16:9 video stream the viewfinder
+ * shows is a crop of it (more so with stabilization): two shots of a form that filled the
+ * viewfinder had the code at 16-21% of the photo's width, 670 and 500 px of 3200, where the
+ * video frame had it at about 800 px of 1920. The photo was the worse image.
+ */
+const MIN_PHOTO_GAIN = 1;
+
+async function shoot(fallback?: HTMLCanvasElement, videoShare?: number): Promise<void> {
   // The button and the auto shot can both fire; one scan at a time shares the OCR worker.
   if (shooting) return;
   shooting = true;
@@ -551,9 +597,27 @@ async function shoot(fallback?: HTMLCanvasElement): Promise<void> {
     // Release the camera, not only pause it: a paused track keeps the camera and any light on.
     stopCamera();
     if (still && fallback && still.source.startsWith("takePhoto")) {
+      // A manual shot: the code's size in the frame is not known yet.
+      if (videoShare === undefined) {
+        const frame = canvasFrom(fallback, fallback.width, fallback.height, 1920);
+        const hit = (await decodePoukaz(frame).catch(() => [] as BarcodeHit[])).find(isPoukazHit);
+        videoShare = hit ? codeShare(hit.position, frame.width) : 0;
+        release(frame);
+      }
       const check = canvasFrom(still.canvas, still.canvas.width, still.canvas.height, 2400);
-      const hits = await decodePoukaz(check).catch(() => [] as BarcodeHit[]);
-      if (!hits.some(isPoukazHit)) still = { canvas: fallback, source: `video ${fallback.width}x${fallback.height} (the photo had no code: ${still.source})` };
+      const hit = (await decodePoukaz(check).catch(() => [] as BarcodeHit[])).find(isPoukazHit);
+      const photoShare = hit ? codeShare(hit.position, check.width) : 0;
+      release(check);
+      const inVideo = Math.round(videoShare * fallback.width);
+      const inPhoto = Math.round(photoShare * still.canvas.width);
+      state.diag.camera = {
+        ...(state.diag.camera as object),
+        codeWidth: { video: `${inVideo} px of ${fallback.width} (${Math.round(videoShare * 100)} %)`, photo: `${inPhoto} px of ${still.canvas.width} (${Math.round(photoShare * 100)} %)` },
+      };
+      const video = `video ${fallback.width}x${fallback.height}`;
+      if (!hit) still = { canvas: fallback, source: `${video} (the photo had no code: ${still.source})` };
+      else if (inPhoto < inVideo * MIN_PHOTO_GAIN) still = { canvas: fallback, source: `${video} (the photo sees wider: code ${inPhoto} px against ${inVideo} px in the video; ${still.source})` };
+      else release(fallback);
     }
     if (!still) {
       showStartError("Nepodarilo sa odfotiť.");
@@ -632,10 +696,16 @@ async function processImage(input: HTMLCanvasElement, extraRotation: number, cap
     // First the quarter turn from the barcode corners, then the small tilt
     // measured on the reading zone, so the form rows run level for OCR and the cell crops.
     const pk = hits.find((h) => h.format === "Code128" && parsePoukazBarcode(h.text));
+    // A code too soft to decode is still found by its look: the form can then be cut out and
+    // read, and the IBAN comes from the digits under the bars (barcodeFromOcrText).
+    const located = pk ? undefined : findCode(canvas);
+    if (located) diag.barcodeLocated = located.map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) }));
     let rotation = extraRotation;
-    if (pk) {
-      const a = orientationFromCorners(pk.position);
-      let quad: Point[] = pk.position;
+    let codeBox: BBox | undefined;
+    const codeQuad = pk?.position ?? located;
+    if (codeQuad) {
+      const a = pk ? orientationFromCorners(pk.position) : 0;
+      let quad: Point[] = codeQuad;
       if (a !== 0) {
         quad = quad.map((p) => rotatePoint(p, canvas.width, canvas.height, -a));
         canvas = rotateCanvas(canvas, -a);
@@ -658,6 +728,7 @@ async function processImage(input: HTMLCanvasElement, extraRotation: number, cap
       const form = cropToForm(full, quad);
       release(full);
       diag.formCrop = form.note;
+      codeBox = form.code;
       release(canvas);
       canvas = form.canvas;
     }
@@ -695,7 +766,7 @@ async function processImage(input: HTMLCanvasElement, extraRotation: number, cap
     diag.ocrMs = page.ms;
     diag.ocrText = page.text;
     diag.ocrLines = page.lines;
-    const ex = extractFields(page.lines);
+    const ex = extractFields(page.lines, codeBox);
     diag.extracted = summarize(ex);
 
     // Clear text under the bars, when the image decode missed the barcode.
@@ -769,7 +840,7 @@ function summarize(ex: ExtractResult): Record<string, string | undefined> {
     name: ex.name?.value,
     message: ex.message?.value,
     amountWords: ex.amountWords ? `${ex.amountWords.text} -> ${ex.amountWords.euros}` : undefined,
-    layout: ex.layout ? `${ex.layout.anchors} labels, error ${ex.layout.residual} px, added: ${ex.layout.added.join(", ") || "none"}` : "no fit",
+    layout: !ex.layout ? "no fit" : ex.layout.anchors ? `${ex.layout.anchors} labels, error ${ex.layout.residual} px, added: ${ex.layout.added.join(", ") || "none"}` : "placed by the barcode alone",
   };
 }
 
@@ -848,6 +919,9 @@ async function readFixedFields(colorCanvas: HTMLCanvasElement, ex: ExtractResult
   const fit = ex.fit;
   if (!fit) return;
   const tries: Record<string, unknown> = {};
+  // Placed by the barcode alone, the grids can sit a row off: on one soft shot the SS grid
+  // read the reference number below it. SS is left out then, VS and KS are flagged.
+  const rough = !ex.layout?.anchors;
 
   // VS from its boxes. The stub's copy, when OCR read it, is the second opinion.
   const vsCells = gridCells(fit, FIELDS.vs);
@@ -857,20 +931,20 @@ async function readFixedFields(colorCanvas: HTMLCanvasElement, ex: ExtractResult
   if (!vs.text && vs.pattern) ex.patterns.vs = vs.pattern;
   if (vs.text) {
     const stub = ex.vs?.value;
-    ex.vs = { value: vs.text, confidence: stub && stub !== vs.text ? Math.min(vs.confidence, 60) : vs.confidence, bbox: union(vsCells), other: stub && stub !== vs.text ? stub : undefined };
+    ex.vs = { value: vs.text, confidence: stub && stub !== vs.text ? Math.min(vs.confidence, 60) : vs.confidence, bbox: union(vsCells), other: stub && stub !== vs.text ? stub : undefined, predicted: rough };
   }
 
   const ksCells = gridCells(fit, FIELDS.ks);
   const ks = await ocrGridDigits(colorCanvas, ksCells, isKnownKsClass, 4);
   tries.ks = ks.attempts;
   if (!ks.text && ks.pattern) ex.patterns.ks = ks.pattern;
-  if (ks.text) ex.ks = { value: ks.text, confidence: ks.confidence, bbox: union(ksCells) };
+  if (ks.text) ex.ks = { value: ks.text, confidence: ks.confidence, bbox: union(ksCells), predicted: rough };
   else {
     const value = ks.partials.map(completeKs).find(Boolean);
     if (value) ex.ks = { value, confidence: 40, bbox: union(ksCells), filled: true };
   }
 
-  if (!ex.ss?.value) {
+  if (!ex.ss?.value && !rough) {
     const ssCells = gridCells(fit, FIELDS.ss);
     const ss = await ocrGridDigits(colorCanvas, ssCells, undefined, 2);
     tries.ss = ss.attempts;
@@ -1068,7 +1142,7 @@ function merge(barcode: PoukazBarcode | null, ex: ExtractResult, ocrCanvas: HTML
       }
     } else if (o?.value) {
       const note = o.other ? `Ľavá časť poukazu má ${o.other}, overte.` : o.predicted ? PREDICTED_NOTE : undefined;
-      setField(key, o.value, "ocr", o.other ? "low" : ocrLevel(o.confidence), crop(o.bbox), note);
+      setField(key, o.value, "ocr", o.other || o.predicted ? "low" : ocrLevel(o.confidence), crop(o.bbox), note);
     } else if (o?.labelBox) {
       q[key].crop = crop({ x0: o.labelBox.x0, y0: o.labelBox.y0, x1: o.labelBox.x1 + (o.labelBox.x1 - o.labelBox.x0) * 0.6, y1: o.labelBox.y1 + (o.labelBox.y1 - o.labelBox.y0) * 3 });
     }
@@ -1501,7 +1575,7 @@ function wire(): void {
     }
   });
 
-  $("btn-shoot").addEventListener("click", () => void shoot());
+  $("btn-shoot").addEventListener("click", () => void shoot(videoFrame(3200) ?? undefined));
   // Open the camera app inside the tap; the live stream must let go of the camera first.
   const openCameraApp = () => {
     stopCamera();

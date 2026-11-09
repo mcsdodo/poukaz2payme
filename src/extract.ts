@@ -5,7 +5,7 @@
 
 import { parseEuroWords } from "./amountwords";
 import { isValidIban, normalizeIban } from "./iban";
-import { fitLayout, type Layout } from "./layout";
+import { fitLayout, layoutFromCode, type Layout } from "./layout";
 import { parseAmount } from "./payme";
 import { strip } from "./text";
 
@@ -334,9 +334,10 @@ function isLabelText(s: string): boolean {
 
 const MIN_MESSAGE_CONFIDENCE = 40;
 
-export function extractFields(ocrLines: OcrLine[]): ExtractResult {
+/** `code`: where the barcode's bars are, to place the template when too few labels were read. */
+export function extractFields(ocrLines: OcrLine[], code?: BBox): ExtractResult {
   const res: ExtractResult = { barcodeDigits: [] };
-  const layout = fitLayout(ocrLines);
+  const layout = fitLayout(ocrLines) ?? (code ? layoutFromCode(code) : undefined);
   // Added labels go last, so a label OCR read comes first wherever the order matters.
   const lines = layout ? [...ocrLines, ...layout.added] : ocrLines;
   if (layout) {

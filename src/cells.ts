@@ -108,8 +108,16 @@ function components(
   }
   let paper = 0;
   for (let acc = 0; paper < 255 && (acc += hist[paper]) < n * 0.75; paper++);
-  const limit = k * paper;
-  if (rules) eraseRules(value, w, h, limit, rules);
+  let limit = k * paper;
+  if (rules) {
+    // A soft photo prints grey, not black: its darkest strokes stayed above half the paper
+    // and every box read as empty. With real contrast in the crop but no ink below the
+    // limit, the limit moves to halfway between the darkest ink and the paper.
+    let dark = 0;
+    for (let acc = 0; dark < 255 && (acc += hist[dark]) < n * 0.01; dark++);
+    if (dark >= limit * 0.9 && paper - dark > paper * 0.2) limit = Math.max(limit, (dark + paper) / 2 - (0.5 - k) * paper * 0.5);
+    eraseRules(value, w, h, limit, rules);
+  }
   // Outside the row's band is the next row or a rule; cut it off so that a letter printed
   // over a slanted rule (the H at the column's border) keeps only the rule's short piece.
   if (band) {
