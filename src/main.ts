@@ -7,7 +7,7 @@ import "./style.css";
 import QRCode from "qrcode";
 import { decode as decodeBySquare } from "bysquare/pay";
 import { rotatePoint, rotatedSize, zoneSkew, type Point } from "./deskew";
-import { decodeCanvas, isSteady, lastZxingError, nativeFormats, orientationFromCorners, warmUpBarcode, type BarcodeHit } from "./barcode";
+import { decodeCanvas, lastZxingError, nativeFormats, orientationFromCorners, warmUpBarcode, type BarcodeHit } from "./barcode";
 import { extractFields, type BBox, type Extracted, type ExtractResult } from "./extract";
 import { bankName, formatIban, isValidIban, normalizeIban, splitSkIban, isValidLegacyPart } from "./iban";
 import { flattenLight } from "./light";
@@ -26,12 +26,9 @@ declare const __APP_VERSION__: string;
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
-const views = ["start", "camera", "work", "result"] as const;
+const views = ["start", "work", "result"] as const;
 type View = (typeof views)[number];
 function show(v: View): void {
-  // Landscape is for aiming the camera only; every other view is laid out for portrait.
-  if (v !== "camera") leaveLandscape();
-  document.body.classList.toggle("camera-on", v === "camera");
   for (const name of views) $(`view-${name}`).hidden = name !== v;
   window.scrollTo(0, 0);
 }
@@ -301,196 +298,10 @@ function cropDataUrl(src: HTMLCanvasElement, b: BBox | undefined, pad = 12): str
   return c.toDataURL("image/jpeg", 0.8);
 }
 
-// ---------- Camera ----------
+// ---------- Barcode ----------
 
-const DEFAULT_CAM_HINT = "Poukaz rovno a bez odleskov. Keď sa kód prečíta a telefón je v pokoji, odfotí sa sám.";
-
-let stream: MediaStream | null = null;
-let scanning = false;
-let shooting = false;
-let torchOn = false;
-
-/**
- * Chrome on Android takes a full-resolution photo from the live stream
- * (ImageCapture). Safari and Firefox cannot: there the live view only has
- * video frames, which put the form at about 1000 px, half of what OCR needs.
- */
-const canTakePhoto = "ImageCapture" in window;
+/** A phone: the capture input opens its camera app, and a failed scan offers it again. */
 const isPhone = matchMedia("(pointer: coarse)").matches;
-/** Width of the code as a share of the frame's: at 0.3 the form fills about 65% of the frame. */
-const MIN_CODE_SHARE = 0.3;
-
-function codeShare(q: { x: number; y: number }[], frameWidth: number): number {
-  return Math.hypot(q[1].x - q[0].x, q[1].y - q[0].y) / frameWidth;
-}
-
-/** Two reads of the code at one place within this time are a phone held still. */
-const STEADY_WINDOW_MS = 1500;
-/** After this long without a code, offer the phone's own camera app. */
-const NATIVE_HINT_MS = 8000;
-
-interface Range {
-  min?: number;
-  max?: number;
-  step?: number;
-}
-
-/**
- * Width the photo is asked for. OCR reads at most 3200 px, and a phone's largest
- * photo (50 MP, 8160x6120) decodes to 200 MB before it is shrunk: on a phone that
- * can leave the later canvases blank.
- */
-const PHOTO_WIDTH = 4096;
-
-/** The largest value of the range up to `want`, on its steps. */
-function upTo(r: Range | undefined, want: number): number | undefined {
-  if (!r?.max) return undefined;
-  if (r.max <= want) return r.max;
-  const min = r.min ?? 0;
-  const step = r.step || 1;
-  return Math.max(min, min + Math.floor((want - min) / step) * step);
-}
-
-interface ImageCaptureLike {
-  getPhotoCapabilities(): Promise<{ imageWidth?: Range; imageHeight?: Range; fillLightMode?: string[] }>;
-  takePhoto(settings?: { imageWidth?: number; imageHeight?: number; fillLightMode?: string }): Promise<Blob>;
-}
-
-interface OrientationLock {
-  lock?(o: "landscape"): Promise<void>;
-  unlock?(): void;
-}
-
-/**
- * Fullscreen and landscape for the live view, on a phone. A portrait 1080x1920
- * stream puts the form at about 1000 px; a landscape one at about 1700, where
- * the code reads in every frame and the backup frame is near what OCR needs.
- * Chrome locks the orientation only in fullscreen, and fullscreen needs the
- * tap: call this before any await in the click handler. Safari cannot lock;
- * the promise then says why, and the camera runs as it is.
- */
-function enterLandscape(): Promise<string> {
-  const orientation = screen.orientation as unknown as OrientationLock | undefined;
-  const root = document.documentElement;
-  if (!isPhone) return Promise.resolve("not a phone");
-  if (!orientation?.lock || !root.requestFullscreen) return Promise.resolve("no orientation lock");
-  const locked = root
-    .requestFullscreen({ navigationUI: "hide" })
-    .then(() => orientation.lock!("landscape"))
-    .then(
-      () => "landscape",
-      (e: unknown) => {
-        if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
-        return `refused: ${e instanceof Error ? e.message : String(e)}`;
-      },
-    );
-  // The camera waits for this. A lock that never settles must not keep it from starting.
-  const timeout = new Promise<string>((r) => setTimeout(() => r(`no answer in ${LOCK_WAIT_MS} ms`), LOCK_WAIT_MS));
-  return Promise.race([locked, timeout]);
-}
-
-const LOCK_WAIT_MS = 2000;
-
-function leaveLandscape(): void {
-  if (!document.fullscreenElement) return;
-  (screen.orientation as unknown as OrientationLock | undefined)?.unlock?.();
-  void document.exitFullscreen().catch(() => {});
-}
-
-async function startCamera(): Promise<void> {
-  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-    throw new Error("Kamera vyžaduje HTTPS a podporovaný prehliadač. Použite \"Vybrať z galérie\".");
-  }
-  if (!stream || stream.getVideoTracks().every((t) => t.readyState === "ended")) {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      // 4K where the phone has it: the frame is exactly what the viewfinder shows, and at
-      // 3840 px the form fills about 3400 of them. The still photo sees wider and is often
-      // softer (see MIN_PHOTO_GAIN); a frame this size usually wins. Decoding downsizes to 1920.
-      video: { facingMode: { ideal: "environment" }, width: { ideal: 3840 }, height: { ideal: 2160 } },
-    });
-  }
-  const track = stream.getVideoTracks()[0];
-  track.enabled = true;
-  const video = $<HTMLVideoElement>("video");
-  video.srcObject = stream;
-  await video.play().catch(() => {});
-
-  const caps = (track.getCapabilities?.() ?? {}) as MediaTrackCapabilities & { focusMode?: string[]; torch?: boolean };
-  if (caps.focusMode?.includes("continuous")) {
-    await track.applyConstraints({ advanced: [{ focusMode: "continuous" } as MediaTrackConstraintSet] }).catch(() => {});
-  }
-  $("btn-torch").hidden = !caps.torch;
-  state.diag.camera = { settings: track.getSettings(), torch: !!caps.torch, focusModes: caps.focusMode };
-}
-
-
-async function setTorch(on: boolean): Promise<void> {
-  const track = stream?.getVideoTracks()[0];
-  if (!track) return;
-  await track.applyConstraints({ advanced: [{ torch: on } as MediaTrackConstraintSet] }).catch(() => {});
-  torchOn = on;
-}
-
-function videoFrame(maxSide: number): HTMLCanvasElement | null {
-  const v = $<HTMLVideoElement>("video");
-  if (!v.videoWidth) return null;
-  return canvasFrom(v, v.videoWidth, v.videoHeight, maxSide);
-}
-
-interface Still {
-  canvas: HTMLCanvasElement;
-  /** For the diagnostics: which path took it, at what size. */
-  source: string;
-}
-
-/**
- * A full-resolution photo where the browser can take one. Without a size,
- * takePhoto uses whatever the browser picks, so this asks for about 4096 px.
- * A device that rejects the size gets a plain takePhoto, then the video frame.
- */
-async function grabStill(): Promise<Still | null> {
-  const track = stream?.getVideoTracks()[0];
-  const IC = (window as unknown as { ImageCapture?: new (t: MediaStreamTrack) => ImageCaptureLike }).ImageCapture;
-  const errors: string[] = [];
-  if (track && IC) {
-    const capture = new IC(track);
-    let sized: { imageWidth: number; imageHeight: number } | undefined;
-    // No flash: Chrome's default lit it for the shot and the light stayed on while OCR ran.
-    // A flash also puts a glare on the paper; the Svetlo button gives steady light instead.
-    let light: { fillLightMode?: string } = {};
-    try {
-      const caps = await capture.getPhotoCapabilities();
-      const width = upTo(caps.imageWidth, PHOTO_WIDTH);
-      const wmax = caps.imageWidth?.max;
-      const height = width && wmax && caps.imageHeight?.max ? upTo(caps.imageHeight, Math.round((width * caps.imageHeight.max) / wmax)) : undefined;
-      if (width && height) sized = { imageWidth: width, imageHeight: height };
-      if (caps.fillLightMode?.includes("off")) light = { fillLightMode: "off" };
-    } catch (e) {
-      errors.push(`capabilities: ${String(e)}`);
-    }
-    // About 4096 px without flash, then the browser's size without flash, then anything it takes.
-    const tries: ({ imageWidth?: number; imageHeight?: number; fillLightMode?: string } | undefined)[] = [];
-    if (sized) tries.push({ ...sized, ...light });
-    if (light.fillLightMode) tries.push(light);
-    tries.push(undefined);
-    for (const settings of tries) {
-      try {
-        const blob = await capture.takePhoto(settings);
-        const bmp = await createImageBitmap(blob, { imageOrientation: "from-image" }).catch(() => createImageBitmap(blob));
-        const source = `takePhoto ${bmp.width}x${bmp.height}${settings?.imageWidth ? "" : " (default size)"}${settings?.fillLightMode ? ", no flash" : ""}`;
-        const canvas = canvasFrom(bmp, bmp.width, bmp.height, 3200);
-        bmp.close();
-        return { canvas, source };
-      } catch (e) {
-        errors.push(String(e));
-      }
-    }
-  }
-  const frame = videoFrame(3200);
-  if (!frame) return null;
-  return { canvas: frame, source: `video ${frame.width}x${frame.height}${errors.length ? ` (takePhoto: ${errors.join("; ")})` : ""}` };
-}
 
 function isPoukazHit(h: BarcodeHit): boolean {
   if (h.format !== "Code128") return false;
@@ -503,7 +314,7 @@ const UPSCALE_BELOW = 2400;
 
 /**
  * Decodes, and when the poukaz code is missing on a small image, decodes again
- * at twice the size. In a portrait 1080x1920 stream the code is about 460 px
+ * at twice the size. On a 1080 px wide photo the code is about 460 px
  * wide, under 2 px per bar module, and zxing never read it (138 frames in a
  * row); at 1.5x it read every time. Corners come back in the input's pixels.
  */
@@ -519,125 +330,6 @@ async function decodePoukaz(canvas: HTMLCanvasElement): Promise<BarcodeHit[]> {
   const more = await decodeCanvas(big);
   if (!more.some(isPoukazHit)) return hits;
   return more.map((h) => ({ ...h, position: h.position.map((p) => ({ x: p.x / 2, y: p.y / 2 })) }));
-}
-
-/**
- * Looks for the poukaz code in the video, at low resolution: the stream only
- * aims the shot. It shoots once the code reads twice in a row at the same
- * place, so the phone is holding still and the focus has settled.
- */
-async function scanLoop(): Promise<void> {
-  scanning = true;
-  let frames = 0;
-  // The last read and when: a frame that misses the code in between does not start the wait over.
-  let prev: { hit: BarcodeHit; at: number } | undefined;
-  let reads = 0;
-  const started = performance.now();
-  $("btn-native").hidden = true;
-  while (scanning) {
-    const frame = videoFrame(1920);
-    if (frame) {
-      frames++;
-      const hits = await decodePoukaz(frame).catch(() => [] as BarcodeHit[]);
-      if (!scanning) return;
-      const found = hits.find(isPoukazHit);
-      // Too far: the photo's still lens sees more than the stabilized video (two shots had
-      // the code at 28-30% of the photo, too soft to decode or read). Only a near code shoots.
-      const share = found ? codeShare(found.position, frame.width) : 0;
-      const good = share >= MIN_CODE_SHARE ? found : undefined;
-      const now = performance.now();
-      if (good && prev && now - prev.at <= STEADY_WINDOW_MS && isSteady(prev.hit.position, good.position, frame.width)) {
-        // The frame at full stream size is the fallback if the photo misses the code.
-        await shoot(videoFrame(3200) ?? undefined, share);
-        return;
-      }
-      if (good) {
-        prev = { hit: good, at: now };
-        reads++;
-      }
-      const other = hits.find((h) => h.format !== "Code128");
-      $("cam-status").textContent = good
-        ? "Kód prečítaný, držte telefón v pokoji..."
-        : found
-          ? `Priblížte telefón k poukazu (kód má ${Math.round(share * 100)} % šírky, treba ${Math.round(MIN_CODE_SHARE * 100)} %).`
-        : other
-          ? `Vidím ${other.format}, hľadám čiarový kód poukazu...`
-          : hits.length
-            ? "Kód nevyzerá ako poukaz, skúste priblížiť."
-            : `Hľadám čiarový kód... (${frames}, ${$<HTMLVideoElement>("video").videoWidth}x${$<HTMLVideoElement>("video").videoHeight}${nativeFormats.length ? "" : ", zxing"}${reads ? `, prečítaný ${reads}x` : ""})`;
-      // A browser cannot open the camera app by itself: it needs a tap, so this offers a button.
-      if (!good && performance.now() - started > NATIVE_HINT_MS && $("btn-native").hidden) {
-        $("btn-native").hidden = false;
-        $("cam-hint").textContent = "Kód sa nedarí prečítať? Odfoťte poukaz fotoaparátom telefónu, fotka má vyššie rozlíšenie.";
-      }
-    }
-    await new Promise((r) => setTimeout(r, 250));
-  }
-}
-
-/**
- * Takes the photo for OCR. `fallback` is a video frame where the code read:
- * takePhoto lags by up to a second, and a phone lowered too early gives a photo
- * without the form, so the photo must contain the code too.
- */
-/**
- * The photo must put at least this many times the video's pixels on the code to be used.
- * Android's still capture sees the whole sensor while the 16:9 video stream the viewfinder
- * shows is a crop of it (more so with stabilization): two shots of a form that filled the
- * viewfinder had the code at 16-21% of the photo's width, 670 and 500 px of 3200, where the
- * video frame had it at about 800 px of 1920. The photo was the worse image.
- */
-const MIN_PHOTO_GAIN = 1;
-
-async function shoot(fallback?: HTMLCanvasElement, videoShare?: number): Promise<void> {
-  // The button and the auto shot can both fire; one scan at a time shares the OCR worker.
-  if (shooting) return;
-  shooting = true;
-  scanning = false;
-  try {
-    $("cam-status").textContent = "Držte telefón, fotím...";
-    let still = await grabStill();
-    // Release the camera, not only pause it: a paused track keeps the camera and any light on.
-    stopCamera();
-    if (still && fallback && still.source.startsWith("takePhoto")) {
-      // A manual shot: the code's size in the frame is not known yet.
-      if (videoShare === undefined) {
-        const frame = canvasFrom(fallback, fallback.width, fallback.height, 1920);
-        const hit = (await decodePoukaz(frame).catch(() => [] as BarcodeHit[])).find(isPoukazHit);
-        videoShare = hit ? codeShare(hit.position, frame.width) : 0;
-        release(frame);
-      }
-      const check = canvasFrom(still.canvas, still.canvas.width, still.canvas.height, 2400);
-      const hit = (await decodePoukaz(check).catch(() => [] as BarcodeHit[])).find(isPoukazHit);
-      const photoShare = hit ? codeShare(hit.position, check.width) : 0;
-      release(check);
-      const inVideo = Math.round(videoShare * fallback.width);
-      const inPhoto = Math.round(photoShare * still.canvas.width);
-      state.diag.camera = {
-        ...(state.diag.camera as object),
-        codeWidth: { video: `${inVideo} px of ${fallback.width} (${Math.round(videoShare * 100)} %)`, photo: `${inPhoto} px of ${still.canvas.width} (${Math.round(photoShare * 100)} %)` },
-      };
-      const video = `video ${fallback.width}x${fallback.height}`;
-      if (!hit) still = { canvas: fallback, source: `${video} (the photo had no code: ${still.source})` };
-      else if (inPhoto < inVideo * MIN_PHOTO_GAIN) still = { canvas: fallback, source: `${video} (the photo sees wider: code ${inPhoto} px against ${inVideo} px in the video; ${still.source})` };
-      else release(fallback);
-    }
-    if (!still) {
-      showStartError("Nepodarilo sa odfotiť.");
-      return;
-    }
-    await processImage(still.canvas, 0, still.source);
-  } finally {
-    shooting = false;
-  }
-}
-
-/** Releases the camera, for the phone's camera app, which cannot share it on an iPhone. */
-function stopCamera(): void {
-  scanning = false;
-  stream?.getTracks().forEach((t) => t.stop());
-  stream = null;
-  torchOn = false;
 }
 
 // ---------- Pipeline ----------
@@ -1224,7 +916,7 @@ function renderResult(): void {
   $("photo-box").toggleAttribute("open", false);
   // A live shot that missed fields: the phone's camera app gives full resolution.
   const missed = !state.fields.amount.value || !state.fields.vs.value;
-  $("retry-photo").hidden = !(state.capture && missed);
+  $("retry-photo").hidden = !(isPhone && missed);
   updateFieldUi();
   updateOutput();
 }
@@ -1552,53 +1244,12 @@ function wire(): void {
   $("footer").textContent = `v${__APP_VERSION__} | ${__BUILD_TIME__}`;
   $("fields").addEventListener("submit", (e) => e.preventDefault());
 
-  // On a phone the camera app is the way to a sharp photo (see CLAUDE.md, "Camera"): it is
-  // the primary button, and the live view with its automatic shot a link. Without
-  // ImageCapture the live view would have only video frames, so the link is not offered.
-  if (isPhone) {
-    const photo = $("btn-photo");
-    photo.className = "btn primary";
-    photo.textContent = "Odfotiť poukaz";
-    const live = $("btn-camera");
-    live.className = "textlink";
-    live.textContent = "Živý náhľad s automatickou spúšťou";
-    live.hidden = !canTakePhoto;
-    $("actions-start").append(live);
-  }
-  $("btn-camera").addEventListener("click", async () => {
-    $("start-error").hidden = true;
-    // Before any await: fullscreen needs the tap.
-    const landscape = enterLandscape();
-    try {
-      show("camera");
-      $("cam-status").textContent = "Spúšťam kameru...";
-      $("cam-hint").textContent = DEFAULT_CAM_HINT;
-      // The stream follows the screen; start it after the turn, so it opens wide.
-      const turned = await landscape;
-      await startCamera();
-      state.diag.camera = { ...(state.diag.camera as object), orientation: turned };
-      warmUpBarcode();
-      void getOcrWorker().catch(() => {});
-      void scanLoop();
-    } catch (e) {
-      showStartError(e instanceof Error ? e.message : String(e));
-    }
-  });
-
-  $("btn-shoot").addEventListener("click", () => void shoot(videoFrame(3200) ?? undefined));
-  // Open the camera app inside the tap; the live stream must let go of the camera first.
+  // The camera again, from the result screen. A browser opens the camera app only from a tap.
   const openCameraApp = () => {
-    stopCamera();
     show("start");
     $<HTMLInputElement>("file-input").click();
   };
-  $("btn-native").addEventListener("click", openCameraApp);
   $("btn-retry-photo").addEventListener("click", openCameraApp);
-  $("btn-torch").addEventListener("click", () => void setTorch(!torchOn));
-  $("btn-cam-cancel").addEventListener("click", () => {
-    stopCamera();
-    show("start");
-  });
 
   const onFile = async (ev: Event) => {
     const file = (ev.target as HTMLInputElement).files?.[0];
@@ -1610,6 +1261,7 @@ function wire(): void {
       step("load");
       setWork("Načítavam obrázok...");
       void getOcrWorker().catch(() => {});
+      warmUpBarcode();
       // Some engines reject the imageOrientation option; EXIF orientation is
       // then applied by default in current browsers anyway.
       const bmp = await createImageBitmap(file, { imageOrientation: "from-image" }).catch(() => createImageBitmap(file));
@@ -1659,12 +1311,6 @@ function wire(): void {
   $("btn-copy-diag").addEventListener("click", (e) => void copy($("diag").textContent ?? "", e.currentTarget as HTMLElement));
   $("btn-again").addEventListener("click", () => show("start"));
 
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden && stream) {
-      stopCamera();
-      if (!$("view-camera").hidden) show("start");
-    }
-  });
 
   state.fields = emptyFields();
   show("start");

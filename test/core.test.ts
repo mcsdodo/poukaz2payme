@@ -10,7 +10,6 @@ import { flattenLight } from "../src/light";
 import { consensus } from "../src/vote";
 import { fitLayout } from "../src/layout";
 import { rotatePoint, rotatedSize, zoneSkew } from "../src/deskew";
-import { isSteady } from "../src/barcode";
 import { completeKs, isKnownKsClass } from "../src/ks";
 import { euroWords, parseEuroWords } from "../src/amountwords";
 import realLines from "./fixtures/poukaz-real-form.lines.json";
@@ -646,20 +645,3 @@ describe("deskew", () => {
   });
 });
 
-describe("hold-still check", () => {
-  const q = (x: number, y: number, w: number) => [
-    { x, y },
-    { x: x + w, y },
-    { x: x + w, y: y + 40 },
-    { x, y: y + 40 },
-  ];
-  it("accepts the code at the same place and size", () => {
-    expect(isSteady(q(300, 900, 600), q(305, 903, 604), 1080)).toBe(true);
-  });
-  it("rejects a phone still moving across", () => {
-    expect(isSteady(q(300, 900, 600), q(340, 900, 600), 1080)).toBe(false);
-  });
-  it("rejects a phone moving closer", () => {
-    expect(isSteady(q(300, 900, 600), q(280, 900, 650), 1080)).toBe(false);
-  });
-});

@@ -2,6 +2,9 @@
 
 ## [2026-11-09]
 
+### Removed
+- app: the live camera view. The phone's camera app, opened by "Odfotiť poukaz", is the only way to take the photo: its photos read every field where live shots read little
+
 ### Changed
 - app: on a phone the main button opens the phone's camera app, whose photos are far sharper than anything a browser can capture; the live view with the automatic shot is a link under it
 

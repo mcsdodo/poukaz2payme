@@ -48,41 +48,31 @@ Do not run `npm run build` while `npm run dev` runs. `copy-assets.mjs` rewrites
 `public/vendor`, and the dev server then returns HTML for the worker file. The error is
 `Unexpected token '<'`.
 
-## Camera: the phone's camera app is the default, the live view an option
+## Camera: the phone's camera app takes the photo
 
 **A browser cannot take a photo of the camera app's quality.** It gets the video pipeline:
 1080p or 4K single frames, video noise reduction that smears print, stabilization that
 crops, on some phones another lens. `ImageCapture.takePhoto` is a thin extra on that stream:
 the sensor's field of view, but none of the multi-frame processing (HDR, night mode,
-sharpening) the camera app does, and often softer than the frame. The user's camera app
-photos read every field; live shots of the same form read little. So on a phone (`isPhone`,
-pointer: coarse) the primary button is "Odfotiť poukaz": `<input capture="environment">`
-opens the camera app and hands the full photo back. The live view with its automatic shot
-is a link under it ("Živý náhľad s automatickou spúšťou"), hidden without `ImageCapture`.
-On a desktop the live view stays the primary button (a webcam has no camera app).
+sharpening) the camera app does, and often softer than the frame. Camera app photos of the
+real form read every field; live shots of the same form read little.
 
-A video frame puts the whole form at about 1000 px (a portrait 1080 px stream, guide frame
-at 90% of its width; in landscape about 1700 px). On the real form that lost VS and KS; the same form at 1930 px read
-everything. So in the live view OCR never gets a plain video frame when a photo is possible:
+So "Odfotiť poukaz" is `<input type="file" capture="environment">`: on a phone it opens the
+camera app and hands the full photo back, on a computer it is a file picker. "Z galérie" is
+the same input without `capture`. A scan that misses VS or the amount offers the camera
+again on the result screen (phones only; a browser opens the camera app only from a tap).
 
-- **Chrome on Android (`ImageCapture`):** the stream finds the code, the shot fires when it
-  reads twice at the same place (`isSteady`), and `takePhoto` asks for about 4096 px wide
-  (`PHOTO_WIDTH`), not the camera's largest. The photo must contain the code too; if not
-  (phone lowered during the shutter lag), the video frame where the code read is used.
-- **The stream is asked at 3840x2160** (`startCamera`), 1920x1080 before. The frame is the
-  picture the user framed, sharp when the code decoded in it, and at 4K it has about 3400 px
-  across the form; the decode loop still downsizes to 1920. A phone without 4K gives its
-  largest. The status line shows the stream size.
-- **The photo sees wider than the viewfinder.** Android's still capture uses the whole
-  sensor at 4:3; the 16:9 video stream is a crop of it, more so with stabilization, and
-  `object-fit: cover` cropped the stream again on screen. Two shots of a form that filled the
-  viewfinder had the code at 16-21% of the photo's width (670 and 500 px of 3200), soft, and
-  nothing read; the 1920 px video frame had it at about 800 px. So the shot keeps the frame
-  where the code read (`shoot(fallback, videoShare)`), decodes the code in both, and uses the
-  photo only when it puts at least as many pixels on the code (`MIN_PHOTO_GAIN`), else the
-  frame; `diag.camera.codeWidth` has both. The manual button passes the frame too. The
-  viewfinder shows the whole stream (`contain`), and a code under 0.3 of the frame's width
-  asks to move closer instead of shooting (`MIN_CODE_SHARE`).
+There is no live view. One existed up to 0.5.x (a `getUserMedia` stream, an automatic shot
+when the barcode read twice at one place, an `ImageCapture` still, a landscape lock); it was
+removed because every image it could produce read worse than a camera app photo, and it
+caused most of the camera trouble. Two things learnt from it still matter for photos:
+
+- **Canvas memory on a phone:** Chrome on Android does not throw when canvas memory runs
+  out; the canvas comes out blank, and a scan then fills only the IBAN (the barcode is read
+  from a 2400 px copy, the level full-size copy is blank, `layout: no fit`). The pipeline
+  frees each copy when the next is made (`release`, `swap`) and checks the OCR image with
+  `isBlank`: a blank one is read again once at 60% of the size, and `diag.capture` says so.
+  Reproduce it in Chromium by making `drawImage` a no-op on canvases over 8 MP.
 - **A code too soft to decode** is still found by its look ([locate.ts](src/locate.ts):
   the one wide flat band of steep edges across and none down; within 3 px of zxing's ends on
   a sharp photo at 1000 px). The form is then cut out and read, the IBAN can come from the
@@ -90,44 +80,10 @@ everything. So in the live view OCR never gets a plain video frame when a photo 
   code alone (`layoutFromCode`, `CODE_BOX`): VS and KS are then flagged, SS is skipped (the
   grid sat a row low once and read the reference number). A soft photo prints grey, so the
   cell threshold moves up when the crop has contrast but no ink below it.
-- **Canvas memory on a phone:** Chrome on Android does not throw when canvas memory runs
-  out; the canvas comes out blank. A live shot then filled only the IBAN (the barcode is read
-  from a 2400 px copy, the level full-size copy came out blank, OCR read nothing, `layout:
-  no fit`). The pipeline frees each copy when the next is made (`release`, `swap`), asks for
-  a 4096 px photo (a 50 MP one decodes to 200 MB first), and checks the OCR image with
-  `isBlank`: a blank one is read again once at 60% of the size, and `diag.capture` says so.
-  Reproduce it in Chromium by making `drawImage` a no-op on canvases over 8 MP.
-- **Landscape:** on a phone the camera tap goes fullscreen and locks landscape
-  (`enterLandscape` in [main.ts](src/main.ts)): the form fills about 1700 px of a 1920 px
-  stream instead of 1000. Chrome locks only in fullscreen, and fullscreen needs the tap, so
-  it is requested before any await. Every other view unlocks and leaves fullscreen
-  (`show`). Safari has no lock; a refusal leaves the camera as it is, and
-  `diag.camera.orientation` says which. The camera starts after the lock, so the wait is
-  capped at 2 s (`no answer in 2000 ms`). The camera status line shows the frame count, the
-  frame size, and `zxing` when the phone has no native barcode detector. The manifest has no `orientation`, because
-  `portrait` kept an installed app from turning. Headless Chromium with `isMobile` accepts
-  the lock but does not turn the viewport, so check the turn on a real phone.
-- **Safari, Firefox, any phone without `ImageCapture`:** only the camera app (`<input
-  capture>`); the live view link is hidden.
-- **No flash, camera released:** `takePhoto` asks for `fillLightMode: "off"` where the
-  camera offers it (a flash glares on the paper, and on one phone the light stayed on after
-  the shot), and the shot stops the stream instead of pausing it: a paused track keeps the
-  camera and its light on while OCR runs. "Späť" stops it too.
-- The auto-shot needs two reads at one place within 1.5 s (`STEADY_WINDOW_MS`), not in two
-  frames in a row: a frame that missed the code started the wait over. The status line
-  counts the reads (`prečítaný 3x`).
-- **Fallbacks:** after 8 s without a code, the camera view offers the camera app; a live
-  shot that misses VS or amount offers it on the result screen. A browser opens the camera
-  app only from a tap, so both are buttons. The stream is stopped first: an iPhone cannot
-  share the camera.
-- In a portrait 1080x1920 stream the code is about 460 px wide, under 2 px per bar, and
-  zxing never read it. `decodePoukaz` in [main.ts](src/main.ts) decodes again at 2x when an
-  image under 2400 px has no poukaz code; at 1.5x it already read.
-- `diag.capture` says which path took the image (`takePhoto WxH`, `video ...` with the
-  reason, or `file`). zxing alone is flaky at video resolution (the photo at 70% size did not
-  decode, at 60% it did); Chrome on Android uses its native detector first.
-- Test with Chromium's fake camera: `--use-fake-device-for-media-stream
-  --use-file-for-fake-video-capture=form.y4m` (make the y4m with ffmpeg from a photo).
+- A small photo (under 2400 px) with no decodable code is decoded again at 2x
+  (`decodePoukaz`): at 460 px across the code zxing never read it, at 1.5x it did.
+- `diag.capture` is `file`, or the blank-retry note. Chrome on Android uses its native
+  barcode detector first, then zxing.
 
 ## Recognition: what is solid and what is a guess
 
