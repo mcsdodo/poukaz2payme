@@ -578,10 +578,18 @@ function handleOtherCodes(hits: BarcodeHit[]): void {
 async function voteName(ocrCanvas: HTMLCanvasElement, ex: ExtractResult, diag: Record<string, unknown>): Promise<void> {
   const copies = (ex.nameCopies ?? []).filter((c) => c.bbox);
   if (!copies.length) return;
+  // The middle ADRESÁT block is the payee's own copy, printed larger and clear of rules; the
+  // stub only copies it. Its readings count one and a half times.
+  const middle = copies.reduce((a, b) => (b.bbox!.x0 > a.bbox!.x0 ? b : a));
   const readings: Reading[] = [];
   for (const c of copies) {
-    readings.push({ text: c.value, confidence: c.confidence });
-    readings.push(await ocrLine(ocrCanvas, c.bbox!));
+    const weight = c === middle && copies.length > 1 ? 1.5 : 1;
+    readings.push({ text: c.value, confidence: c.confidence * weight });
+    // The middle copy's first line is re-read from where the template puts it: OCR merges it
+    // with the next line, and a re-read of the merged box read nothing.
+    const own = c === middle && ex.fit && ex.layout?.anchors ? ex.fit.map(FIELDS.middleName) : undefined;
+    const line = own ? await ocrLine(ocrCanvas, own, 0.08) : await ocrLine(ocrCanvas, c.bbox!);
+    readings.push({ ...line, confidence: line.confidence * weight });
   }
   const voted = consensus(readings);
   diag.nameVote = { readings: readings.map((r) => `${r.text} (${Math.round(r.confidence)})`), result: voted?.text, used: voted?.used };
@@ -637,7 +645,11 @@ async function readFixedFields(colorCanvas: HTMLCanvasElement, ex: ExtractResult
     const stub = ex.vs?.value;
     const differs = !!stub && stub !== vsText;
     ex.vs = { value: vsText, confidence: differs ? Math.min(conf, 60) : conf, bbox: union(vsCells), other: differs ? stub : undefined, predicted: rough };
-  } else if (vsBoxes.length) ex.patterns.vs = vsBoxes.map((b) => b ?? "?").join("");
+  } else {
+    if (vsBoxes.length) ex.patterns.vs = vsBoxes.map((b) => b ?? "?").join("");
+    // Only the stub's copy is left: it stands in, marked, until the user checks the boxes.
+    if (ex.vs?.value) ex.vs = { ...ex.vs, confidence: Math.min(ex.vs.confidence, 60), note: "Políčka VS sa neprečítali, hodnota je z ľavej časti poukazu. Overte ju." };
+  }
   const ksText = ksBoxes.includes(null) ? "" : ksBoxes.join("");
   if (ksText.length === 4) {
     ex.ks = { value: ksText, confidence: isKnownKsClass(ksText) ? conf : Math.min(conf, 60), bbox: union(ksCells), predicted: rough };
@@ -647,7 +659,35 @@ async function readFixedFields(colorCanvas: HTMLCanvasElement, ex: ExtractResult
     else ex.patterns.ks = ksBoxes.map((b) => b ?? "?").join("");
   }
 
-  if (!ex.ss?.value && !rough) {
+  // The amount from its boxes; the stub's "=37 50" is the fallback. The amount in words
+  // (independent, only the euros) decides when the two disagree.
+  if (!rough) {
+    const amountCells = gridCells(fit, FIELDS.amount);
+    const amt = await ocrGridDigits(colorCanvas, amountCells);
+    tries.amount = amt.attempts;
+    const boxes = amt.boxes ?? [];
+    const euroBoxes = boxes.slice(0, 6).filter((b) => b !== undefined);
+    const centBoxes = boxes.slice(6, 8);
+    const euros = euroBoxes.includes(null) ? "" : euroBoxes.join("");
+    const cents = centBoxes.every((b) => typeof b === "string") ? centBoxes.join("") : "";
+    if (euros && cents.length === 2) {
+      const boxed = `${Number(euros)},${cents}`;
+      const stub = ex.amount?.value ? parseAmount(ex.amount.value) : undefined;
+      const words = ex.amountWords?.euros;
+      const fits = (v: number | undefined) => v !== undefined && words !== undefined && Math.floor(v / 100) === words;
+      const boxedCents = parseAmount(boxed);
+      if (!(words !== undefined && !fits(boxedCents) && fits(stub))) {
+        const other = stub !== undefined && stub !== boxedCents ? ex.amount!.value : undefined;
+        ex.amount = { value: boxed, confidence: other ? 60 : amt.confidence || 80, bbox: union(amountCells), other };
+      }
+    }
+  }
+
+  // SS comes from its boxes alone: whatever the label search found is dropped, and an empty
+  // grid is an empty SS (most forms leave it blank).
+  ex.fixed = new Set(["ss"]);
+  ex.ss = undefined;
+  if (!rough) {
     const ssCells = gridCells(fit, FIELDS.ss);
     const ss = await ocrGridDigits(colorCanvas, ssCells, undefined, 2);
     tries.ss = ss.attempts;
@@ -679,6 +719,7 @@ async function secondPass(
 ): Promise<void> {
   const tries: Record<string, unknown> = {};
   for (const key of ["vs", "ss", "ks", "amount"] as const) {
+    if (ex.fixed?.has(key)) continue;
     const f = ex[key];
     if (key === "amount") {
       const boxed = await readBoxedAmount(colorCanvas, ex);
@@ -814,7 +855,8 @@ function merge(barcode: PoukazBarcode | null, ex: ExtractResult, ocrCanvas: HTML
     const printed = ex.amount?.value ? parseAmount(ex.amount.value) : undefined;
     const coded = barcode?.amountCents;
     if (printed) {
-      setField("amount", formatAmount(printed).replace(".", ","), "ocr", ocrLevel(ex.amount!.confidence), crop(ex.amount!.bbox));
+      const other = ex.amount!.other;
+      setField("amount", formatAmount(printed).replace(".", ","), "ocr", other ? "low" : ocrLevel(ex.amount!.confidence), crop(ex.amount!.bbox), other ? `Ľavá časť poukazu má ${other}, overte.` : undefined);
       if (coded && coded !== printed) {
         q.amount.note = `Čiarový kód hovorí ${formatAmount(coded).replace(".", ",")} EUR; platí vytlačená suma.`;
         addAlert("warn", "Suma v čiarovom kóde sa líši od vytlačenej. Pošta pripisuje vytlačenú sumu, overte ju.");
@@ -846,8 +888,8 @@ function merge(barcode: PoukazBarcode | null, ex: ExtractResult, ocrCanvas: HTML
         q[key].level = "high";
       }
     } else if (o?.value) {
-      const note = o.other ? `Ľavá časť poukazu má ${o.other}, overte.` : o.predicted ? PREDICTED_NOTE : undefined;
-      setField(key, o.value, "ocr", o.other || o.predicted ? "low" : ocrLevel(o.confidence), crop(o.bbox), note);
+      const note = o.note ?? (o.other ? `Ľavá časť poukazu má ${o.other}, overte.` : o.predicted ? PREDICTED_NOTE : undefined);
+      setField(key, o.value, "ocr", o.note || o.other || o.predicted ? "low" : ocrLevel(o.confidence), crop(o.bbox), note);
     } else if (o?.labelBox) {
       q[key].crop = crop({ x0: o.labelBox.x0, y0: o.labelBox.y0, x1: o.labelBox.x1 + (o.labelBox.x1 - o.labelBox.x0) * 0.6, y1: o.labelBox.y1 + (o.labelBox.y1 - o.labelBox.y0) * 3 });
     }

@@ -332,10 +332,18 @@ describe("OCR extraction rules", () => {
     expect(r.centsBelowLabel?.value).toBe("50");
   });
   it("does not take half of a number cut by a form rule", () => {
-    // VS 112613 printed on the rule between the VS and SS rows: two short fragments.
-    const label = line("ŠPECIFICKÝ SYMBOL", 60, 762, 223, 776);
-    expect(extractFields([label, line("1120719", 281, 762, 370, 771)]).ss?.value).toBe("");
-    expect(extractFields([label, line("112613", 281, 756, 370, 776)]).ss?.value).toBe("112613");
+    // VS 112613 printed on the rule between the stub's VS and SS rows: two short fragments.
+    const label = line("VARIABILNÝ SYMBOL", 60, 732, 223, 746);
+    expect(extractFields([label, line("453042", 281, 735, 370, 744)]).vs?.value).toBe("");
+    expect(extractFields([label, line("112613", 281, 728, 370, 748)]).vs?.value).toBe("112613");
+  });
+  it("never reads SS from the stub: its boxes are the source", () => {
+    const r = extractFields([
+      line("ŠPECIFICKÝ SYMBOL", 60, 762, 223, 776),
+      line("112613", 281, 756, 370, 776),
+      line("SK39 1100 0000 0029 4101 6716", 900, 600, 1900, 630),
+    ]);
+    expect(r.ss?.value ?? "").toBe("");
   });
   it("does not take a scrap of the ADRESÁT label as the name", () => {
     // OCR read the label and a scrap of it just under, above the real line (seen on a 4K frame).

@@ -136,6 +136,8 @@ caused most of the camera trouble. Two things learnt from it still matter for ph
   - Digits use the same grid at three thresholds, voted per box (`ocrGridDigits`). Where
     the grid read part of a field (`112?13`), the label-based fallback must fit that
     pattern: on a 970 px frame it read `1126130`.
+  - A grid one box out leaves its stray character within a box of its end, so only ink that
+    close counts as outside: K. SPRAC.'s `3` stands 1.4 boxes right of the amount's cents.
   - **The grid can land a whole box out.** The nudge picks the nearest box, so a fit off by
     about half a box (15 px on a portrait photo) put the VS/KS grid one box left: VS read
     `11261`, KS `3017`. So VS and KS are read as one row of 14 boxes (they print as one; KS
@@ -168,10 +170,27 @@ caused most of the camera trouble. Two things learnt from it still matter for ph
   is still a signal and never blocks.
 - **The barcode often holds zeros for VS and amount.** On that form only the IBAN came from
   it, so OCR is the only source for the other fields.
-- **Heuristic, in the order [extract.ts](src/extract.ts) tries them:**
+- **The boxes are the source of truth; the stub only copies them.** With a template fit:
+  - VS and KS come from their 14 boxes; the stub's VS is shown as a note when it differs,
+    and stands in, flagged, only when the boxes cannot be read.
+  - SS comes from its boxes alone. The stub's SS is never used, even without a fit (only
+    the rightmost SS label, right of the stub's quarter, is searched): the stub prints VS on
+    the rule between its VS and SS rows, and it was read as an SS. An empty grid is an empty
+    SS, which most forms have.
+  - The amount comes from its boxes (`FIELDS.amount`: 6 euro boxes with the `=`, 2 cent
+    boxes, as one row; no digit is wider than tall, so the `=` is skipped). The stub's
+    `=37 50` is the fallback and a note. When the two differ, the amount in words decides.
+  - The name: the middle ADRESÁT block is the payee's copy, printed larger and clear of
+    rules. Its readings count 1.5 times in the vote, and its first line is re-read from the
+    template's box (`FIELDS.middleName`, y 699-732; the second line starts at 733): OCR
+    merged the two lines into one 85 px line, and a re-read of that read nothing.
+  - `ex.fixed` names the fields read from boxes alone; the label search's cell pass leaves
+    them be.
+- **Heuristic, in the order [extract.ts](src/extract.ts) tries them** (without a fit, and as
+  fallbacks):
   - The left stub repeats VS, amount, IBAN and name as plain text, and OCR reads it far
-    better than the boxed copy. So the leftmost label goes first, and its value is on the
-    same row, right of the label.
+    better than the boxed copy by page OCR. So for VS and the amount the leftmost label goes
+    first, and its value is on the same row, right of the label.
   - The form has no decimal separator. EUR and cent are separate columns, and OCR returns
     them as two lines (`=28`, `50`).
   - The KS label is `KONŠT. SYMBOL`, and KS exists only in boxes.

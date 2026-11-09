@@ -37,6 +37,8 @@ export interface Extracted {
   predicted?: boolean;
   /** Another copy on the form read differently: shown in the field's note. */
   other?: string;
+  /** Shown under the field, and the field marked for checking. */
+  note?: string;
 }
 
 export interface ExtractResult {
@@ -61,6 +63,8 @@ export interface ExtractResult {
   layout?: { anchors: number; residual: number; added: string[] };
   /** The fit itself, to read the fixed field boxes (layout.ts FIELDS). */
   fit?: Layout;
+  /** Fields read from their boxes alone: the label search and the cell pass leave them be. */
+  fixed?: Set<"vs" | "ss" | "ks" | "amount">;
   /** What the boxes showed where they could not be read whole ("112?13"): a fallback must fit it. */
   patterns?: Partial<Record<"vs" | "ss" | "ks", string>>;
 }
@@ -367,7 +371,14 @@ export function extractFields(ocrLines: OcrLine[], code?: BBox): ExtractResult {
     const re = LABELS[key];
     // The left stub repeats the field as plain text, and OCR reads that far
     // better than the boxed copy on the right. So the leftmost label goes first.
-    const labels = lines.filter((l) => re.test(strip(l.text))).sort((a, b) => a.bbox.x0 - b.bbox.x0);
+    let labels = lines.filter((l) => re.test(strip(l.text))).sort((a, b) => a.bbox.x0 - b.bbox.x0);
+    // The boxes are the source; the stub only copies them. SS is read from its boxes alone:
+    // the stub prints VS on the rule between its VS and SS rows, and it was read as an SS.
+    // The stub is the form's left quarter.
+    if (key === "ss") {
+      const right = Math.max(...lines.map((l) => l.bbox.x1));
+      labels = labels.filter((l) => l.bbox.x0 > right * 0.28).slice(-1);
+    }
     if (!labels.length) continue;
     let found: Extracted | undefined;
     const fits = (v: string | undefined) => (v && v.length >= symbolMin[key] ? v : undefined);

@@ -114,6 +114,18 @@ export const FIELDS = {
   ks: { x: 1809, pitch: 46.3, n: 4, y0: 652, y1: 704 } as Grid,
   /** ŠPECIFICKÝ SYMBOL, middle column: 10 boxes. */
   ss: { x: 641, pitch: 47.8, n: 10, y0: 855, y1: 908 } as Grid,
+  /**
+   * SUMA: 6 euro boxes (the "=" in the 4th, digits right-aligned) and 2 cent boxes, read as
+   * one row; the separator between them is a little wider. Measured on both photos: digits at
+   * x 1421, 1466 | 1516, 1561, y 457-482.
+   */
+  amount: { x: 1213, pitch: 46.4, n: 8, y0: 445, y1: 495 } as Grid,
+  /**
+   * The middle ADRESÁT block's first line: the payee's name. Its ink runs y 702-731 (accents
+   * from 702), the second line starts at 733. OCR merged the two into one 85 px line, and a
+   * re-read of that read nothing; this box is re-read on its own.
+   */
+  middleName: b(655, 699, 1175, 732),
   /** SPRÁVA PRE ADRESÁTA: two rows of 12 boxes. A word runs on from the first row to the second. */
   message: [
     { x: 662, pitch: 47.6, n: 12, y0: 1008, y1: 1066 },

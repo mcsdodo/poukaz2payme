@@ -2,6 +2,10 @@
 
 ## [2026-11-09]
 
+### Changed
+- ocr: the boxes are the source of truth: VS, KS, SS and the amount are read from their boxes, the left part only stands in or adds a note; SS is never taken from the left part
+- ocr: the name leans on the middle ADRESÁT copy, whose first line is now re-read on its own
+
 ### Fixed
 - ocr: portrait photos read VS and KS right; the box grid no longer lands one box out
 - ocr: a caron touching its letter is kept (MŠ), and rule scraps no longer read as a hyphen or a letter
