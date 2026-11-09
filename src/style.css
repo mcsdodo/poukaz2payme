@@ -945,6 +945,18 @@ progress::-moz-progress-bar {
   margin: 0 0 8px;
 }
 
+/* ---------- Update ---------- */
+
+.update-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+body.camera-on .update-bar {
+  display: none;
+}
+
 /* ---------- Diagnostics and footer ---------- */
 
 .diag {

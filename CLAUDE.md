@@ -27,8 +27,18 @@ The build writes `dist/sw.js` from [scripts/sw-template.js](scripts/sw-template.
 [vite.config.ts](vite.config.ts)). It precaches the shell (HTML, bundles, woff2, zxing wasm,
 about 1.5 MB) and caches `vendor/` on first use, so a phone stores only the Tesseract core it
 runs. The shell cache name is a hash of the shell files; the vendor cache name is the Tesseract
-package versions, so a deploy keeps the 15 MB unless Tesseract changed. There is no
+package versions, so a deploy keeps the 15 MB unless Tesseract changed. There is no automatic
 `skipWaiting`: an open page keeps its old files, and the new version runs on the next start.
+
+GitHub Pages sends `max-age=600` on every file, `sw.js` and `index.html` included. A plain
+`fetch` in the worker uses that HTTP cache, so for 10 minutes after a deploy, opening the
+app gave the old `index.html` and the old bundle (a reload revalidates, so a reload test
+hides this). So the page fetch uses `cache: "no-cache"`, the precache `cache: "reload"`, and
+the registration `updateViaCache: "none"`. An installed app reopened from the recent apps
+list only resumes and never reloads, so the page calls `registration.update()` when it comes
+to the front and shows "Je pripravená nová verzia" when a worker waits; its button sends
+`skip-waiting`, and `controllerchange` reloads. To test it, serve two builds with
+`max-age=600` in turn and open the page with a new navigation, not `reload()`.
 `npm run dev` has no service worker. To test offline, build, `npx vite preview`, load once,
 then stop the server and reload.
 
