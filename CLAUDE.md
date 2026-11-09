@@ -63,7 +63,9 @@ everything. So OCR never gets a plain video frame when a photo is possible:
   stream instead of 1000. Chrome locks only in fullscreen, and fullscreen needs the tap, so
   it is requested before any await. Every other view unlocks and leaves fullscreen
   (`show`). Safari has no lock; a refusal leaves the camera as it is, and
-  `diag.camera.orientation` says which. The manifest has no `orientation`, because
+  `diag.camera.orientation` says which. The camera starts after the lock, so the wait is
+  capped at 2 s (`no answer in 2000 ms`). The camera status line shows the frame count, the
+  frame size, and `zxing` when the phone has no native barcode detector. The manifest has no `orientation`, because
   `portrait` kept an installed app from turning. Headless Chromium with `isMobile` accepts
   the lock but does not turn the viewport, so check the turn on a real phone.
 - **Safari, Firefox, any phone without `ImageCapture`:** "Skenovať kamerou" opens the
