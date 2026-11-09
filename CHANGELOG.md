@@ -10,6 +10,8 @@
 - ocr: VS, KS, SS and the message are read from the form's fixed boxes; the two-line message now reads letter by letter, with accents
 
 ### Fixed
+- ocr: a scrap of the ADRESÁT label is no longer taken as the name
+- camera: the live stream is asked at 4K, so the frame the user framed has twice the detail
 - camera: the photo sees wider than the viewfinder, so a shot of a form that filled the screen came out far away and read nothing; the sharper of the photo and the video frame is now used, the viewfinder shows the whole stream, and a far code asks to move closer
 - ocr: a barcode too soft to decode is still located, so the form is read
 - camera: a live shot no longer fills only the IBAN on a phone low on canvas memory; the photo is asked at about 4096 px, copies are freed, and a blank image is read again smaller

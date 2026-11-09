@@ -338,6 +338,15 @@ describe("OCR extraction rules", () => {
     expect(extractFields([label, line("1120719", 281, 762, 370, 771)]).ss?.value).toBe("");
     expect(extractFields([label, line("112613", 281, 756, 370, 776)]).ss?.value).toBe("112613");
   });
+  it("does not take a scrap of the ADRESÁT label as the name", () => {
+    // OCR read the label and a scrap of it just under, above the real line (seen on a 4K frame).
+    const r = extractFields([
+      line("ADRESÁT", 37, 932, 125, 950),
+      line("SÁT", 92, 943, 126, 960),
+      line("ZÁKLADNÁ ŠKOLA, VZOROVÁ CESTA 1", 36, 962, 520, 990),
+    ]);
+    expect(r.name?.value).toBe("ZÁKLADNÁ ŠKOLA, VZOROVÁ CESTA 1");
+  });
   it("does not take a short run as KS: it prints all 4 digits", () => {
     const r = extractFields([line("KONŠT. SYMBOL 1", 100, 100)]);
     expect(r.ks?.value).toBe("");

@@ -58,6 +58,10 @@ everything. So OCR never gets a plain video frame when a photo is possible:
   reads twice at the same place (`isSteady`), and `takePhoto` asks for about 4096 px wide
   (`PHOTO_WIDTH`), not the camera's largest. The photo must contain the code too; if not
   (phone lowered during the shutter lag), the video frame where the code read is used.
+- **The stream is asked at 3840x2160** (`startCamera`), 1920x1080 before. The frame is the
+  picture the user framed, sharp when the code decoded in it, and at 4K it has about 3400 px
+  across the form; the decode loop still downsizes to 1920. A phone without 4K gives its
+  largest. The status line shows the stream size.
 - **The photo sees wider than the viewfinder.** Android's still capture uses the whole
   sensor at 4:3; the 16:9 video stream is a crop of it, more so with stabilization, and
   `object-fit: cover` cropped the stream again on screen. Two shots of a form that filled the
@@ -222,6 +226,9 @@ everything. So OCR never gets a plain video frame when a photo is possible:
     shares 4 letters with the label is OCR's own garbled reading of it and is skipped.
     [test/fixtures/poukaz-real-form-2.lines.json](test/fixtures/poukaz-real-form-2.lines.json)
     is that photo, after deskew.
+  - The stub's name line needs 5 letters or a space: OCR split `ADRESÁT` and its `SÁT`
+    scrap was taken as the name, with the real line (confidence 92) right under it, and the
+    vote then had nothing good to work with.
   - **Name vote ([vote.ts](src/vote.ts)):** the payee's first line is printed twice (the
     stub and the middle ADRESÁT block, `nameCopies`), and `ocrLine` reads each copy again
     from its own crop, so there are up to four readings. They are aligned letter by letter to
