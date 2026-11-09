@@ -404,7 +404,10 @@ async function startCamera(): Promise<void> {
   if (!stream || stream.getVideoTracks().every((t) => t.readyState === "ended")) {
     stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
-      video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+      // 4K where the phone has it: the frame is exactly what the viewfinder shows, and at
+      // 3840 px the form fills about 3400 of them. The still photo sees wider and is often
+      // softer (see MIN_PHOTO_GAIN); a frame this size usually wins. Decoding downsizes to 1920.
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 3840 }, height: { ideal: 2160 } },
     });
   }
   const track = stream.getVideoTracks()[0];
@@ -561,7 +564,7 @@ async function scanLoop(): Promise<void> {
           ? `Vidím ${other.format}, hľadám čiarový kód poukazu...`
           : hits.length
             ? "Kód nevyzerá ako poukaz, skúste priblížiť."
-            : `Hľadám čiarový kód... (${frames}, ${frame.width}x${frame.height}${nativeFormats.length ? "" : ", zxing"}${reads ? `, prečítaný ${reads}x` : ""})`;
+            : `Hľadám čiarový kód... (${frames}, ${$<HTMLVideoElement>("video").videoWidth}x${$<HTMLVideoElement>("video").videoHeight}${nativeFormats.length ? "" : ", zxing"}${reads ? `, prečítaný ${reads}x` : ""})`;
       // A browser cannot open the camera app by itself: it needs a tap, so this offers a button.
       if (!good && performance.now() - started > NATIVE_HINT_MS && $("btn-native").hidden) {
         $("btn-native").hidden = false;

@@ -440,12 +440,15 @@ export function extractFields(ocrLines: OcrLine[], code?: BBox): ExtractResult {
   res.amountColumns = findAmountColumns(lines);
   res.centsBelowLabel = findCentsBelowLabel(lines);
 
-  const textUnder = (label: OcrLine): Extracted | undefined => {
+  // `minLetters`: a payee's name has at least 5 letters; OCR split "ADRESÁT" and its "SÁT" was
+  // taken as the name, with the real line right under it. A scrap of the label is skipped too.
+  const textUnder = (label: OcrLine, minLetters: number): Extracted | undefined => {
     for (const below of linesBelow(lines, label, 3)) {
-      if (isLabelText(below.text)) continue;
+      if (isLabelText(below.text) || resemblesLabel(below.text, label.text)) continue;
       const line = joinRow(lines, below);
       const v = line.text.replace(/[|_[\]]/g, " ").replace(/\s+/g, " ").trim();
-      if (/[A-Za-zÀ-ž]{3,}/.test(v)) {
+      const letters = v.replace(/[^\p{L}]/gu, "").length;
+      if (/[A-Za-zÀ-ž]{3,}/.test(v) && (letters >= minLetters || v.includes(" "))) {
         return { value: v, confidence: line.confidence, bbox: line.bbox, labelBox: label.bbox, predicted: label.predicted };
       }
     }
@@ -454,7 +457,7 @@ export function extractFields(ocrLines: OcrLine[], code?: BBox): ExtractResult {
   // Every label in turn: the stub's can have nothing under it when the photo cut the stub.
   for (const key of ["name", "message"] as const) {
     for (const label of lines.filter((l) => LABELS[key].test(strip(l.text)))) {
-      const found = textUnder(label);
+      const found = textUnder(label, key === "name" ? 5 : 3);
       if (found) {
         res[key] = found;
         break;
@@ -463,7 +466,7 @@ export function extractFields(ocrLines: OcrLine[], code?: BBox): ExtractResult {
   }
   const copies = lines
     .filter((l) => LABELS.name.test(strip(l.text)))
-    .map(textUnder)
+    .map((l) => textUnder(l, 5))
     .filter((c): c is Extracted => !!c);
   // Two labels can find the same line; each printed copy votes once.
   res.nameCopies = copies.filter((c, i) => copies.findIndex((o) => o.bbox === c.bbox) === i);
