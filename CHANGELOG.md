@@ -2,6 +2,9 @@
 
 ## [2026-11-09]
 
+### Added
+- camera: on Android the live view goes fullscreen and turns to landscape, where the form is larger in the frame
+
 ### Fixed
 - ocr: a shadow over the form no longer blacks out half of it; the light is evened out before OCR
 - ocr: the form is cut out by the barcode and scaled to a fixed width, so a photo from a distance reads like a close one
