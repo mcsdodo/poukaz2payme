@@ -48,11 +48,22 @@ Do not run `npm run build` while `npm run dev` runs. `copy-assets.mjs` rewrites
 `public/vendor`, and the dev server then returns HTML for the worker file. The error is
 `Unexpected token '<'`.
 
-## Camera: the live view aims, a photo is what OCR reads
+## Camera: the phone's camera app is the default, the live view an option
+
+**A browser cannot take a photo of the camera app's quality.** It gets the video pipeline:
+1080p or 4K single frames, video noise reduction that smears print, stabilization that
+crops, on some phones another lens. `ImageCapture.takePhoto` is a thin extra on that stream:
+the sensor's field of view, but none of the multi-frame processing (HDR, night mode,
+sharpening) the camera app does, and often softer than the frame. The user's camera app
+photos read every field; live shots of the same form read little. So on a phone (`isPhone`,
+pointer: coarse) the primary button is "Odfotiť poukaz": `<input capture="environment">`
+opens the camera app and hands the full photo back. The live view with its automatic shot
+is a link under it ("Živý náhľad s automatickou spúšťou"), hidden without `ImageCapture`.
+On a desktop the live view stays the primary button (a webcam has no camera app).
 
 A video frame puts the whole form at about 1000 px (a portrait 1080 px stream, guide frame
 at 90% of its width; in landscape about 1700 px). On the real form that lost VS and KS; the same form at 1930 px read
-everything. So OCR never gets a plain video frame when a photo is possible:
+everything. So in the live view OCR never gets a plain video frame when a photo is possible:
 
 - **Chrome on Android (`ImageCapture`):** the stream finds the code, the shot fires when it
   reads twice at the same place (`isSteady`), and `takePhoto` asks for about 4096 px wide
@@ -96,8 +107,8 @@ everything. So OCR never gets a plain video frame when a photo is possible:
   frame size, and `zxing` when the phone has no native barcode detector. The manifest has no `orientation`, because
   `portrait` kept an installed app from turning. Headless Chromium with `isMobile` accepts
   the lock but does not turn the viewport, so check the turn on a real phone.
-- **Safari, Firefox, any phone without `ImageCapture`:** "Skenovať kamerou" opens the
-  phone's camera app (`<input capture>`), which gives a full photo. There is no live view.
+- **Safari, Firefox, any phone without `ImageCapture`:** only the camera app (`<input
+  capture>`); the live view link is hidden.
 - **No flash, camera released:** `takePhoto` asks for `fillLightMode: "off"` where the
   camera offers it (a flash glares on the paper, and on one phone the light stayed on after
   the shot), and the shot stops the stream instead of pausing it: a paused track keeps the

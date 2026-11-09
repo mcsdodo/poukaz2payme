@@ -60,14 +60,15 @@
             <rect class="zone" x="22" y="68" width="163" height="28" />
             <path class="bars" d="M28.0 74v17h1.5v-17zM31.0 74v17h2v-17zM34.0 74v17h1v-17zM36.0 74v17h1.5v-17zM38.5 74v17h3v-17zM43.0 74v17h1v-17zM45.0 74v17h2v-17zM50.0 74v17h1v-17zM52.5 74v17h1v-17zM56.5 74v17h1v-17zM58.5 74v17h1v-17zM60.5 74v17h3v-17zM66.5 74v17h1v-17zM69.0 74v17h1v-17zM71.5 74v17h1.5v-17zM76.0 74v17h1v-17zM78.0 74v17h3v-17zM83.0 74v17h3v-17zM87.5 74v17h1v-17zM90.0 74v17h1.5v-17zM92.5 74v17h3v-17zM96.5 74v17h3v-17zM100.5 74v17h3v-17zM105.0 74v17h2v-17zM110.0 74v17h1.5v-17zM114.5 74v17h3v-17zM120.5 74v17h1.5v-17zM124.0 74v17h1v-17zM126.5 74v17h1v-17zM128.5 74v17h3v-17zM133.5 74v17h3v-17zM139.5 74v17h1.5v-17zM144.0 74v17h1.5v-17zM146.5 74v17h1v-17zM150.5 74v17h1v-17zM153.5 74v17h1v-17zM157.5 74v17h2v-17zM160.5 74v17h1v-17zM163.5 74v17h1.5v-17zM167.0 74v17h3v-17zM173.0 74v17h3v-17z" />
           </svg>
-          <figcaption>Do záberu celý poukaz. Kód v čítacej zóne dole stačí na IBAN, ostatné polia sa dočítajú z textu.</figcaption>
+          <figcaption>Do záberu celý poukaz, ostro a bez tieňa. Kód v čítacej zóne dole stačí na IBAN, ostatné polia sa dočítajú z textu.</figcaption>
         </figure>
 
-        <div class="actions">
+        <div id="actions-start" class="actions">
+          <!-- On a phone main.ts swaps these: the camera app is the primary button, the live view a link. -->
           <button id="btn-camera" class="btn primary">Skenovať kamerou</button>
           <div class="pair">
             <!-- Two inputs: `capture` opens the camera directly and hides the gallery. -->
-            <label class="btn" for="file-input">Odfotiť</label>
+            <label id="btn-photo" class="btn" for="file-input">Odfotiť</label>
             <input id="file-input" type="file" accept="image/*" capture="environment" hidden />
             <label class="btn" for="gallery-input">Z galérie</label>
             <input id="gallery-input" type="file" accept="image/*" hidden />
