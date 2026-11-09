@@ -5,20 +5,23 @@ PAY by square QR code for a bank app.
 
 **Open the app: <https://mcsdodo.github.io/poukaz2payme/>**
 
-The camera, the barcode decode and the OCR all run in the browser. No image leaves the
-device. The app has no server, and a Content Security Policy in `index.html` blocks
+The barcode decode and the OCR run in the browser. No image leaves the device. The app has no server, and a Content Security Policy in `index.html` blocks
 requests to other origins.
 
 ## What it reads
 
+The boxes on the right part of the form are the source of truth. The left part only copies
+them, so it is a fallback and a cross-check.
+
 | Field | Source |
 |---|---|
-| IBAN | Code 128 barcode, accepted when it passes mod-97. OCR is the fallback. |
-| Amount | Printed digits, checked against the amount in words |
-| VS, SS | Plain copy on the left part of the form, then the boxed copy |
-| KS | Boxed copy, one digit at a time, checked against the known KS classes |
-| Name | OCR |
-| Message | OCR, from the message boxes of the form |
+| IBAN | Code 128 barcode, accepted when it passes mod-97. OCR of the printed IBAN is the fallback. |
+| Amount | The SUMA boxes, then the left part's copy. The amount in words checks both and decides when they differ. |
+| VS | The VS boxes, one digit at a time. The left part's copy fills in, flagged, only when the boxes can't be read. |
+| SS | The SS boxes only. Most forms leave them empty. |
+| KS | The KS boxes, one digit at a time, checked against the known KS classes |
+| Name | The first line of the middle ADRESÁT block, voted with the left part's copy |
+| Message | The SPRÁVA PRE ADRESÁTA boxes, one letter per box, both rows joined |
 
 Always compare the result with the form before you pay. OCR can read a field incorrectly.
 A field that needs attention has a flag and a note.
@@ -28,9 +31,11 @@ browser has one, and a PAY by square QR that can be saved as an image.
 
 After the first scan the app works offline, and it can be added to the home screen.
 
-On Android in Chrome the live view finds the form and the app takes a full-resolution photo.
-On an iPhone, "Skenovať kamerou" opens the phone's camera, because Safari cannot take a
-full-resolution photo from a live view, and a video frame is too small for the printed text.
+"Odfotiť poukaz" opens the phone's camera app and reads the photo it takes; "Z galérie"
+reads a photo already on the phone. There is no live camera view: a browser only gets a
+video feed, and its frames read far worse than a camera app photo. For a good scan, get the
+whole form in the frame, close and sharp, without a shadow across it. Upright or sideways
+does not matter.
 
 ## Development
 
@@ -40,8 +45,8 @@ npm test
 npm run dev
 ```
 
-`npm run build` writes a static site to `dist/`. Serve it from any path over HTTPS. The
-camera needs a secure context. Without HTTPS only the file input works.
+`npm run build` writes a static site to `dist/`. Serve it from any path. Over HTTPS the
+service worker works offline; the scan itself only needs the file input.
 
 ## Publish
 
