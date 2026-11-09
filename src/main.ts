@@ -1552,14 +1552,21 @@ function wire(): void {
   $("footer").textContent = `v${__APP_VERSION__} | ${__BUILD_TIME__}`;
   $("fields").addEventListener("submit", (e) => e.preventDefault());
 
+  // On a phone the camera app is the way to a sharp photo (see CLAUDE.md, "Camera"): it is
+  // the primary button, and the live view with its automatic shot a link. Without
+  // ImageCapture the live view would have only video frames, so the link is not offered.
+  if (isPhone) {
+    const photo = $("btn-photo");
+    photo.className = "btn primary";
+    photo.textContent = "Odfotiť poukaz";
+    const live = $("btn-camera");
+    live.className = "textlink";
+    live.textContent = "Živý náhľad s automatickou spúšťou";
+    live.hidden = !canTakePhoto;
+    $("actions-start").append(live);
+  }
   $("btn-camera").addEventListener("click", async () => {
     $("start-error").hidden = true;
-    // Without ImageCapture a phone's live view has only video frames: open its camera app,
-    // which takes a full photo. This must run inside the tap, before any await.
-    if (!canTakePhoto && isPhone) {
-      $<HTMLInputElement>("file-input").click();
-      return;
-    }
     // Before any await: fullscreen needs the tap.
     const landscape = enterLandscape();
     try {

@@ -2,6 +2,9 @@
 
 ## [2026-11-09]
 
+### Changed
+- app: on a phone the main button opens the phone's camera app, whose photos are far sharper than anything a browser can capture; the live view with the automatic shot is a link under it
+
 ### Added
 - camera: on Android the live view goes fullscreen and turns to landscape, where the form is larger in the frame
 
