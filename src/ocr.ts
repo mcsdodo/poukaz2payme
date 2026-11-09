@@ -102,16 +102,30 @@ function isGoodCell(c: { ch: string; confidence: number }): boolean {
   return c.ch.length === 1 && c.confidence >= MIN_CELL_CONFIDENCE;
 }
 
-/** Each page mode returns nothing for some clean characters, and not the same ones. */
-async function readCell(w: Worker, tile: HTMLCanvasElement): Promise<{ ch: string; confidence: number }> {
+/**
+ * A printed digit this narrow is a 1: every other digit is 0.6 of its height
+ * or wider, a 1 about 0.35. Tesseract read a clean, isolated 1 as 4 at 84.
+ */
+const NARROW = 0.45;
+
+/**
+ * Each page mode returns nothing for some clean characters, and not the same ones.
+ * A narrow shape read as anything but 1 tries the other modes, and is unreadable
+ * when none of them says 1: an empty field is better than a wrong one.
+ */
+async function readCell(w: Worker, tile: HTMLCanvasElement, aspect: number): Promise<{ ch: string; confidence: number }> {
+  const narrow = aspect < NARROW;
   let last = { ch: "", confidence: 0 };
+  let misread: string | undefined;
   for (const mode of [PSM.SINGLE_CHAR, PSM.SINGLE_WORD, PSM.SINGLE_BLOCK]) {
     await w.setParameters({ tessedit_pageseg_mode: mode });
     const { data } = await w.recognize(tile);
     last = { ch: data.text.trim(), confidence: data.confidence };
-    if (isGoodCell(last)) break;
+    if (!isGoodCell(last)) continue;
+    if (!narrow || last.ch === "1") return last;
+    misread ??= last.ch;
   }
-  return last;
+  return misread ? { ch: `${misread}?`, confidence: 0 } : last;
 }
 
 /**
@@ -163,7 +177,7 @@ export async function ocrBoxedDigits(
       c.width = t.width;
       c.height = t.height;
       c.getContext("2d")!.putImageData(new ImageData(new Uint8ClampedArray(t.data), t.width, t.height), 0, 0);
-      const cell = await readCell(w, c);
+      const cell = await readCell(w, c, t.aspect);
       read.push(`${cell.ch || "?"}(${Math.round(cell.confidence)})`);
       if (isGoodCell(cell)) {
         cells.push(cell.ch);

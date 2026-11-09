@@ -7,6 +7,8 @@ export interface Tile {
   height: number;
   /** RGBA, black character on white. */
   data: Uint8ClampedArray;
+  /** Width over height of the character itself, without the margin. */
+  aspect: number;
 }
 
 interface Image {
@@ -106,6 +108,6 @@ export function segmentCells(img: Image, k: number): Tile[] {
           }
         }
       }
-      return { x: c.x0, width: tw, height: th, data: out };
+      return { x: c.x0, width: tw, height: th, data: out, aspect: cw / ch };
     });
 }

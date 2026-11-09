@@ -6,6 +6,8 @@
 - camera: on Android the live view goes fullscreen and turns to landscape, where the form is larger in the frame
 
 ### Fixed
+- ocr: the name is the first address line, not the town, on a photo taken at an angle
+- ocr: a boxed 1 no longer reads as 4
 - app: a new version shows when the app is opened again, and an open app offers to update
 - ocr: a shadow over the form no longer blacks out half of it; the light is evened out before OCR
 - ocr: the form is cut out by the barcode and scaled to a fixed width, so a photo from a distance reads like a close one

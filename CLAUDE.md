@@ -148,7 +148,16 @@ everything. So OCR never gets a plain video frame when a photo is possible:
     (it prints leading zeros), 2 for VS and SS. A smaller photo gave a confident VS `1` for
     112606 when one shape survived the threshold. A shape under 0.7 of the tallest is a piece
     of the label or the next box, not a digit. The crop is scaled to 230 px tall: at a fixed
-    3x a small photo gave 54 px digits and a clean `1` read as `4` at 90.
+    3x a small photo gave 54 px digits and a clean `1` read as `4` at 90. Even at 230 px a
+    clean, well cut `1` read as `4` at 84, so the shape decides too: a printed `1` is about
+    0.35 as wide as tall, every other digit 0.6 or more. A shape under 0.45 read as anything
+    but `1` tries the other page modes and is unreadable when none says `1`.
+  - An added label is off by up to two label heights on a photo taken at an angle (the
+    stub ADRESÁT 40 px low, on the first address line, so the name became the town). Under
+    an added label, a line counts once its middle is below the label's top, and a line that
+    shares 4 letters with the label is OCR's own garbled reading of it and is skipped.
+    [test/fixtures/poukaz-real-form-2.lines.json](test/fixtures/poukaz-real-form-2.lines.json)
+    is that photo, after deskew.
   - The digit pass under the SUMA label must agree with the amount in words (it once gave
     `1` at confidence 17 for 37 in words), or have confidence >= 60 without words.
 - **Tesseract traps:** a character tile needs a wide white margin (at 14 px a clean `9`
