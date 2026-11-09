@@ -26,6 +26,9 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 const views = ["start", "camera", "work", "result"] as const;
 type View = (typeof views)[number];
 function show(v: View): void {
+  // Landscape is for aiming the camera only; every other view is laid out for portrait.
+  if (v !== "camera") leaveLandscape();
+  document.body.classList.toggle("camera-on", v === "camera");
   for (const name of views) $(`view-${name}`).hidden = name !== v;
   window.scrollTo(0, 0);
 }
@@ -240,6 +243,42 @@ const NATIVE_HINT_MS = 8000;
 interface ImageCaptureLike {
   getPhotoCapabilities(): Promise<{ imageWidth?: { max?: number }; imageHeight?: { max?: number } }>;
   takePhoto(settings?: { imageWidth?: number; imageHeight?: number }): Promise<Blob>;
+}
+
+interface OrientationLock {
+  lock?(o: "landscape"): Promise<void>;
+  unlock?(): void;
+}
+
+/**
+ * Fullscreen and landscape for the live view, on a phone. A portrait 1080x1920
+ * stream puts the form at about 1000 px; a landscape one at about 1700, where
+ * the code reads in every frame and the backup frame is near what OCR needs.
+ * Chrome locks the orientation only in fullscreen, and fullscreen needs the
+ * tap: call this before any await in the click handler. Safari cannot lock;
+ * the promise then says why, and the camera runs as it is.
+ */
+function enterLandscape(): Promise<string> {
+  const orientation = screen.orientation as unknown as OrientationLock | undefined;
+  const root = document.documentElement;
+  if (!isPhone) return Promise.resolve("not a phone");
+  if (!orientation?.lock || !root.requestFullscreen) return Promise.resolve("no orientation lock");
+  return root
+    .requestFullscreen({ navigationUI: "hide" })
+    .then(() => orientation.lock!("landscape"))
+    .then(
+      () => "landscape",
+      (e: unknown) => {
+        if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+        return `refused: ${e instanceof Error ? e.message : String(e)}`;
+      },
+    );
+}
+
+function leaveLandscape(): void {
+  if (!document.fullscreenElement) return;
+  (screen.orientation as unknown as OrientationLock | undefined)?.unlock?.();
+  void document.exitFullscreen().catch(() => {});
 }
 
 async function startCamera(): Promise<void> {
@@ -1165,11 +1204,16 @@ function wire(): void {
       $<HTMLInputElement>("file-input").click();
       return;
     }
+    // Before any await: fullscreen needs the tap.
+    const landscape = enterLandscape();
     try {
       show("camera");
       $("cam-status").textContent = "Spúšťam kameru...";
       $("cam-hint").textContent = DEFAULT_CAM_HINT;
+      // The stream follows the screen; start it after the turn, so it opens wide.
+      const turned = await landscape;
       await startCamera();
+      state.diag.camera = { ...(state.diag.camera as object), orientation: turned };
       warmUpBarcode();
       void getOcrWorker().catch(() => {});
       void scanLoop();

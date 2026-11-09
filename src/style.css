@@ -358,6 +358,50 @@ main {
   color: rgba(159, 224, 184, 0.9);
 }
 
+/* A phone on its side: the video takes the height, the controls a column on the right. */
+@media (orientation: landscape) and (max-height: 560px) {
+  body.camera-on .masthead,
+  body.camera-on footer {
+    display: none;
+  }
+  body.camera-on main {
+    max-width: none;
+    padding: 8px max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left));
+  }
+  #view-camera:not([hidden]) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(170px, 30%);
+    grid-template-rows: auto auto auto 1fr;
+    align-content: start;
+    column-gap: 14px;
+    height: calc(100dvh - 16px);
+  }
+  #view-camera .viewfinder {
+    grid-column: 1;
+    grid-row: 1 / -1;
+    aspect-ratio: auto;
+    height: 100%;
+    max-height: none;
+  }
+  #view-camera > :not(.viewfinder) {
+    grid-column: 2;
+  }
+  #view-camera .status {
+    margin: 4px 0 0;
+  }
+  #view-camera .actions.row {
+    flex-direction: column;
+    margin: 10px 0;
+  }
+  #view-camera .btn {
+    padding: 10px 12px;
+  }
+  #view-camera .fine {
+    margin: 4px 0;
+    font-size: 12.5px;
+  }
+}
+
 /* ---------- Work ---------- */
 
 .steps {

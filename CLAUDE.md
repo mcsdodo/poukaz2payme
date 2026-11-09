@@ -48,6 +48,14 @@ everything. So OCR never gets a plain video frame when a photo is possible:
   reads twice in a row at the same place (`isSteady`), and `takePhoto` asks for the largest
   size from `getPhotoCapabilities`. The photo must contain the code too; if not (phone
   lowered during the shutter lag), the video frame where the code read is used.
+- **Landscape:** on a phone the camera tap goes fullscreen and locks landscape
+  (`enterLandscape` in [main.ts](src/main.ts)): the form fills about 1700 px of a 1920 px
+  stream instead of 1000. Chrome locks only in fullscreen, and fullscreen needs the tap, so
+  it is requested before any await. Every other view unlocks and leaves fullscreen
+  (`show`). Safari has no lock; a refusal leaves the camera as it is, and
+  `diag.camera.orientation` says which. The manifest has no `orientation`, because
+  `portrait` kept an installed app from turning. Headless Chromium with `isMobile` accepts
+  the lock but does not turn the viewport, so check the turn on a real phone.
 - **Safari, Firefox, any phone without `ImageCapture`:** "Skenovať kamerou" opens the
   phone's camera app (`<input capture>`), which gives a full photo. There is no live view.
 - **Fallbacks:** after 8 s without a code, the camera view offers the camera app; a live
