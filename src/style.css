@@ -306,104 +306,6 @@ main {
   color: var(--ink-2);
 }
 
-/* ---------- Camera ---------- */
-
-.viewfinder {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 3 / 4;
-  max-height: 68vh;
-  background: #0b0f0c;
-  border: 1px solid var(--green);
-  overflow: hidden;
-}
-.viewfinder video {
-  width: 100%;
-  height: 100%;
-  /* The whole stream, letterboxed: with cover the viewfinder showed a crop of it, and the
-     photo then held far more around the form than the screen suggested. */
-  object-fit: contain;
-}
-.frame {
-  --c: #9fe0b8;
-  position: absolute;
-  left: 5%;
-  right: 5%;
-  top: 50%;
-  aspect-ratio: 2.07 / 1;
-  transform: translateY(-50%);
-  box-shadow: 0 0 0 9999px rgba(8, 12, 9, 0.55);
-  background:
-    linear-gradient(var(--c), var(--c)) top left / 22px 3px no-repeat,
-    linear-gradient(var(--c), var(--c)) top left / 3px 22px no-repeat,
-    linear-gradient(var(--c), var(--c)) top right / 22px 3px no-repeat,
-    linear-gradient(var(--c), var(--c)) top right / 3px 22px no-repeat,
-    linear-gradient(var(--c), var(--c)) bottom left / 22px 3px no-repeat,
-    linear-gradient(var(--c), var(--c)) bottom left / 3px 22px no-repeat,
-    linear-gradient(var(--c), var(--c)) bottom right / 22px 3px no-repeat,
-    linear-gradient(var(--c), var(--c)) bottom right / 3px 22px no-repeat;
-}
-.frame .zone {
-  position: absolute;
-  left: 9%;
-  right: 9%;
-  bottom: 6%;
-  height: 22%;
-  border: 1px dashed rgba(159, 224, 184, 0.7);
-  display: flex;
-  align-items: flex-start;
-  justify-content: flex-end;
-  padding: 2px 5px;
-  font: 500 10px "IBM Plex Mono", monospace;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: rgba(159, 224, 184, 0.9);
-}
-
-/* A phone on its side: the video takes the height, the controls a column on the right. */
-@media (orientation: landscape) and (max-height: 560px) {
-  body.camera-on .masthead,
-  body.camera-on footer {
-    display: none;
-  }
-  body.camera-on main {
-    max-width: none;
-    padding: 8px max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left));
-  }
-  #view-camera:not([hidden]) {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(170px, 30%);
-    grid-template-rows: auto auto auto 1fr;
-    align-content: start;
-    column-gap: 14px;
-    height: calc(100dvh - 16px);
-  }
-  #view-camera .viewfinder {
-    grid-column: 1;
-    grid-row: 1 / -1;
-    aspect-ratio: auto;
-    height: 100%;
-    max-height: none;
-  }
-  #view-camera > :not(.viewfinder) {
-    grid-column: 2;
-  }
-  #view-camera .status {
-    margin: 4px 0 0;
-  }
-  #view-camera .actions.row {
-    flex-direction: column;
-    margin: 10px 0;
-  }
-  #view-camera .btn {
-    padding: 10px 12px;
-  }
-  #view-camera .fine {
-    margin: 4px 0;
-    font-size: 12.5px;
-  }
-}
-
 /* ---------- Work ---------- */
 
 .steps {
@@ -945,9 +847,6 @@ progress::-moz-progress-bar {
 #btn-save-qr {
   margin-top: 12px;
 }
-#btn-native {
-  margin-top: 12px;
-}
 .retry {
   margin-bottom: 14px;
 }
@@ -962,9 +861,6 @@ progress::-moz-progress-bar {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-}
-body.camera-on .update-bar {
-  display: none;
 }
 
 /* ---------- Diagnostics and footer ---------- */

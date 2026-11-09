@@ -121,22 +121,3 @@ export function orientationFromCorners(pts: { x: number; y: number }[]): number 
   const a = (Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x) * 180) / Math.PI;
   return ((Math.round(a / 90) * 90) % 360 + 360) % 360;
 }
-
-/**
- * Two reads of the code in consecutive frames at the same place and size: the
- * phone is holding still. The first decodable frame is often still moving or
- * focusing, because the barcode decodes before the small text is sharp.
- */
-export function isSteady(prev: { x: number; y: number }[], cur: { x: number; y: number }[], frameWidth: number): boolean {
-  if (prev.length < 2 || cur.length < 2) return false;
-  const center = (q: { x: number; y: number }[]) => ({
-    x: q.reduce((s, p) => s + p.x, 0) / q.length,
-    y: q.reduce((s, p) => s + p.y, 0) / q.length,
-  });
-  const width = (q: { x: number; y: number }[]) => Math.hypot(q[1].x - q[0].x, q[1].y - q[0].y);
-  const a = center(prev);
-  const b = center(cur);
-  const wa = width(prev);
-  const wb = width(cur);
-  return Math.hypot(a.x - b.x, a.y - b.y) <= frameWidth * 0.02 && Math.abs(wa - wb) <= Math.max(wa, wb) * 0.05;
-}

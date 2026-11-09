@@ -2,7 +2,7 @@
 <html lang="sk">
   <head>
     <!-- GitHub Pages cannot set headers. This keeps the "no image leaves the device" promise enforced. -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; style-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self'; style-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'" />
     <meta name="referrer" content="no-referrer" />
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -64,11 +64,9 @@
         </figure>
 
         <div id="actions-start" class="actions">
-          <!-- On a phone main.ts swaps these: the camera app is the primary button, the live view a link. -->
-          <button id="btn-camera" class="btn primary">Skenovať kamerou</button>
-          <div class="pair">
-            <!-- Two inputs: `capture` opens the camera directly and hides the gallery. -->
-            <label id="btn-photo" class="btn" for="file-input">Odfotiť</label>
+          <div class="row">
+            <!-- `capture` opens the phone's camera app; on a computer it is a file picker. -->
+            <label id="btn-photo" class="btn primary" for="file-input">Odfotiť poukaz</label>
             <input id="file-input" type="file" accept="image/*" capture="environment" hidden />
             <label class="btn" for="gallery-input">Z galérie</label>
             <input id="gallery-input" type="file" accept="image/*" hidden />
@@ -82,22 +80,6 @@
           pridať na plochu.
         </p>
         <p id="start-error" class="note block" hidden></p>
-      </section>
-
-      <!-- Camera -->
-      <section id="view-camera" class="view" hidden>
-        <div class="viewfinder">
-          <video id="video" playsinline muted autoplay></video>
-          <div class="frame"><div class="zone">čítacia zóna</div></div>
-        </div>
-        <p id="cam-status" class="status">Hľadám čiarový kód...</p>
-        <div class="actions row">
-          <button id="btn-shoot" class="btn primary">Odfotiť teraz</button>
-          <button id="btn-torch" class="btn" hidden>Svetlo</button>
-          <button id="btn-cam-cancel" class="btn">Späť</button>
-        </div>
-        <button id="btn-native" class="btn wide" type="button" hidden>Odfotiť fotoaparátom telefónu</button>
-        <p id="cam-hint" class="fine center">Poukaz rovno a bez odleskov. Keď sa kód prečíta a telefón je v pokoji, odfotí sa sám.</p>
       </section>
 
       <!-- Working -->
