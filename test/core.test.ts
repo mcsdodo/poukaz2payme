@@ -12,6 +12,7 @@ import { isSteady } from "../src/barcode";
 import { completeKs, isKnownKsClass } from "../src/ks";
 import { euroWords, parseEuroWords } from "../src/amountwords";
 import realLines from "./fixtures/poukaz-real-form.lines.json";
+import realLines2 from "./fixtures/poukaz-real-form-2.lines.json";
 
 // Independent vectors: the IBAN and the payme link come from the design doc.
 // The barcode vectors below are built with this code's own mod-11, so they only
@@ -291,6 +292,22 @@ describe("OCR extraction on a real form", () => {
   });
 });
 
+// A second photo of a real poukaz, after deskew, taken at an angle. Personal and payment
+// data replaced as above. OCR missed the stub's ADRESÁT label, and the template placed
+// it about 40 px low, on the first address line.
+describe("OCR extraction on a real form taken at an angle", () => {
+  const r = extractFields(realLines2 as OcrLine[]);
+
+  it("takes the first address line under an added label as the name", () => {
+    expect(r.layout?.added).toContain("ADRESÁT");
+    expect(r.name?.value).toBe("ZÁ KLADNÁ ŠKOLA, VZOROVÁ CESTA 1");
+  });
+  it("reads the amount", () => {
+    expect(r.amount?.value).toBe("28,50");
+    expect(r.amountWords?.euros).toBe(28);
+  });
+});
+
 describe("OCR extraction rules", () => {
   it("accepts the abbreviated KS label with the value on the line", () => {
     expect(extractFields([line("KONŠT. SYMBOL 0179", 100, 100)]).ks?.value).toBe("0179");
@@ -344,6 +361,8 @@ describe("segmentCells", () => {
     const tiles = segmentCells(img, 0.5);
     expect(tiles.map((t) => t.x)).toEqual([40, 120]);
     expect(tiles[0].width).toBeGreaterThan(15);
+    // The shape's own proportions, without the margin: a narrow one is a 1.
+    expect(tiles[0].aspect).toBeCloseTo(15 / 30);
   });
   it("drops shapes touching the crop edge, like the table or a label remnant", () => {
     const img = page(200, 60, [

@@ -109,10 +109,26 @@ function linesRightOf(lines: OcrLine[], label: OcrLine): OcrLine[] {
     .sort((a, b) => a.bbox.x0 - b.bbox.x0);
 }
 
+/** Shares a run of 4 letters with the label: OCR's own reading of it, cut or garbled. */
+function resemblesLabel(text: string, label: string): boolean {
+  const t = strip(text).replace(/[^a-z]/g, "");
+  const l = strip(label).replace(/[^a-z]/g, "");
+  for (let i = 0; i + 4 <= t.length; i++) if (l.includes(t.slice(i, i + 4))) return true;
+  return false;
+}
+
 function linesBelow(lines: OcrLine[], label: OcrLine, max = 2): OcrLine[] {
   const h = Math.max(1, label.bbox.y1 - label.bbox.y0);
+  // An added label sits where the template puts it, off by up to two label heights
+  // on a photo taken at an angle (seen: the stub ADRESÁT 40 px low, on the line under
+  // it). Its value is the first line whose middle is below the label's top.
+  // That reaches the label's own row, so a garbled reading of the label ("DRESAT") is skipped.
+  const below = (l: OcrLine) =>
+    label.predicted
+      ? (l.bbox.y0 + l.bbox.y1) / 2 >= label.bbox.y0 - h * 0.5 && !resemblesLabel(l.text, label.text)
+      : l.bbox.y0 >= label.bbox.y0 + h * 0.5;
   return lines
-    .filter((l) => l !== label && l.bbox.y0 >= label.bbox.y0 + h * 0.5 && l.bbox.y0 <= label.bbox.y1 + h * 4)
+    .filter((l) => l !== label && below(l) && l.bbox.y0 <= label.bbox.y1 + h * 4)
     .filter((l) => overlapsX(l.bbox, label.bbox))
     .sort((a, b) => a.bbox.y0 - b.bbox.y0)
     .slice(0, max);
