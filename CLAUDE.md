@@ -106,10 +106,10 @@ caused most of the camera trouble. Two things learnt from it still matter for ph
   deskew. An affine fit maps them onto the labels OCR read (needs 4, usually gets 30), and
   each label OCR missed is added at its predicted place, so extract.ts finds its value as
   usual. A label OCR read always wins. Values found next to an added label get a note. The
-  template also gives the message boxes: the message is printed over its label, so it is
-  read from the area, at OCR confidence >= 40, and flagged low.
-- **Fixed field boxes (`FIELDS` in [layout.ts](src/layout.ts)):** VS, KS, SS and the two
-  message rows are read from where the form prints them, mapped by the template fit, not
+  message is read from its boxes (below); the template's `messageArea`, read from page OCR
+  at confidence >= 40, is only the fallback.
+- **Fixed field boxes (`FIELDS` in [layout.ts](src/layout.ts)):** VS, KS, SS, the amount
+  and the two message rows are read from where the form prints them, mapped by the template fit, not
   searched for next to their labels (`readFixedFields` in [main.ts](src/main.ts)). Each is a
   grid: first box, pitch, count. They were measured on two real photos straightened by the
   fit (box separators and character centers; the photos agreed within 6 px). To measure
@@ -152,11 +152,12 @@ caused most of the camera trouble. Two things learnt from it still matter for ph
     on either side is a stub of a rule, not a letter.
   - Placed by the barcode alone, VS, KS and SS are not read (a soft shot gave VS `128101`),
     and a message with more than a tenth of its boxes unreadable is dropped.
-  - The name stays label-based with the vote: fixed name boxes picked up the address's
-    second line when the fit was off.
+  - The name's copies are still found by their labels: a fixed box around both copies
+    picked up the address's second line when the fit was off. Only the middle copy's first
+    line is re-read from a fixed box (`FIELDS.middleName`), kept tight to that line.
   - On both photos at all sizes the message reads `MŠ-Malé,RICHARD LAČNÝ`, except at
-    1300 px (two accents lost, the marks are a few pixels). At 970 px (a portrait video
-    frame) it is garbled, and VS is left empty rather than wrong.
+    1300 px (two accents lost, the marks are a few pixels). With the form at 970 px it is
+    garbled, and VS is left empty rather than wrong.
 - **Solid:** IBAN from the Code 128C barcode, accepted when it passes mod-97. The payme link
   matches the example in the SBA standard (unit test). PAY by square round-trips through
   `bysquare` decode (unit test).
@@ -210,8 +211,9 @@ caused most of the camera trouble. Two things learnt from it still matter for ph
     split it into two short lines and took the lower one as an SS. A stub value line shorter
     than 0.8 of its label is a fragment and is skipped. The rule under the stub amount can
     read as a trailing dot (`=37.`, `50.`).
-  - A boxed field that page OCR cannot read goes to the cell pass ([cells.ts](src/cells.ts),
-    `ocrBoxedDigits`): it isolates each printed character and reads it alone. A result counts
+  - Without a template fit, a boxed field that page OCR cannot read goes to the cell pass
+    ([cells.ts](src/cells.ts), `ocrBoxedDigits`), aimed by its label: it isolates each
+    printed character and reads it alone. With a fit the grids above do this job. A result counts
     only when every character has confidence >= 70, and only with enough characters: 4 for KS
     (it prints leading zeros), 2 for VS and SS. A smaller photo gave a confident VS `1` for
     112606 when one shape survived the threshold. A shape under 0.7 of the tallest is a piece
@@ -259,13 +261,13 @@ caused most of the camera trouble. Two things learnt from it still matter for ph
 - **Tesseract traps:** a character tile needs a wide white margin (at 14 px a clean `9`
   returned nothing), and each page mode returns nothing for some clean characters, so
   `ocrBoxedDigits` tries three modes per character.
-- **Not solved:** the boxed euro digits read as nothing, so the words stand in. There is no
-  perspective correction: the affine template fit absorbs a mild keystone, about 10 px on
+- **Not solved:** the amount boxes read on 5 of 8 test images; on the rest the stub's copy
+  stands in, checked by the words. There is no perspective correction: the affine template fit absorbs a mild keystone, about 10 px on
   the real photo, and the grid's offset step absorbs the rest along a row. The page OCR's
   message (from `messageArea`) stays only when the boxes give fewer than 2 letters.
 
 The result screen's photo panel has "Uložiť fotku": it saves the image the scan read
-(`state.source`, the live shot or the file) as a JPEG, through the share sheet on a phone. A
+(`state.source`) as a JPEG, through the share sheet on a phone. A
 form that read badly can then be sent along with the diagnostics and added as a test.
 
 The result screen has a "Diagnostika" panel (raw barcode digits and corners, variant,

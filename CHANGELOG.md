@@ -2,45 +2,27 @@
 
 ## [2026-11-09]
 
-### Changed
-- ocr: the boxes are the source of truth: VS, KS, SS and the amount are read from their boxes, the left part only stands in or adds a note; SS is never taken from the left part
-- ocr: the name leans on the middle ADRESÁT copy, whose first line is now re-read on its own
+### Added
+- ocr: VS, KS, SS, the amount and the message are read from the form's own boxes; the two-line message reads letter by letter, with accents
+- app: the photo a scan read can be saved to the phone ("Uložiť fotku")
 
-### Fixed
-- ocr: portrait photos read VS and KS right; the box grid no longer lands one box out
-- ocr: a caron touching its letter is kept (MŠ), and rule scraps no longer read as a hyphen or a letter
+### Changed
+- ocr: the boxes are the source of truth: the left part of the form only stands in or adds a note, and SS is never taken from it
+- ocr: the name is voted from both printed copies, leaning on the middle ADRESÁT copy, whose first line is re-read on its own
+- app: "Odfotiť poukaz" opens the phone's camera app, whose photos are far sharper than anything a browser can capture
 
 ### Removed
-- app: the live camera view. The phone's camera app, opened by "Odfotiť poukaz", is the only way to take the photo: its photos read every field where live shots read little
-
-### Changed
-- app: on a phone the main button opens the phone's camera app, whose photos are far sharper than anything a browser can capture; the live view with the automatic shot is a link under it
-
-### Added
-- camera: on Android the live view goes fullscreen and turns to landscape, where the form is larger in the frame
-
-### Added
-- app: the photo a scan read can be saved to the phone ("Uložiť fotku")
-- ocr: VS, KS, SS and the message are read from the form's fixed boxes; the two-line message now reads letter by letter, with accents
+- app: the live camera view. Every image it could give read worse than a camera app photo, and it caused most of the camera trouble
 
 ### Fixed
-- ocr: a scrap of the ADRESÁT label is no longer taken as the name
-- camera: the live stream is asked at 4K, so the frame the user framed has twice the detail
-- camera: the photo sees wider than the viewfinder, so a shot of a form that filled the screen came out far away and read nothing; the sharper of the photo and the video frame is now used, the viewfinder shows the whole stream, and a far code asks to move closer
-- ocr: a barcode too soft to decode is still located, so the form is read
-- camera: a live shot no longer fills only the IBAN on a phone low on canvas memory; the photo is asked at about 4096 px, copies are freed, and a blank image is read again smaller
-- camera: the auto-shot fires on two reads within 1.5 s, not only in two frames in a row
-- camera: the photo is taken without flash, and the camera turns off right after the shot
-- ocr: boxed digits are voted across thresholds, so one misread threshold no longer gives a wrong VS or KS
-- ocr: the name survives a stub cut by the photo's edge or a line OCR split in two
-- ocr: the name is the first address line, not the town, on a photo taken at an angle
-- ocr: the name is read from both printed copies and voted letter by letter, so a misread letter or a lost accent is corrected
-- ocr: a boxed 1 no longer reads as 4
-- app: a new version shows when the app is opened again, and an open app offers to update
 - ocr: a shadow over the form no longer blacks out half of it; the light is evened out before OCR
-- ocr: the form is cut out by the barcode and scaled to a fixed width, so a photo from a distance reads like a close one
-- camera: the live view finds the code in a portrait stream, where it never read before
-- ocr: VS, KS and amount read on a form where pieces of labels, a rule through the stub, or dots from the underline got in the way
+- ocr: a photo from a distance or at an angle reads like a close one; the form is cut out by the barcode and scaled
+- ocr: portrait photos read VS and KS right; the box grid no longer lands one box out
+- ocr: boxed digits are voted across thresholds, so one misread threshold no longer gives a wrong digit; a boxed 1 no longer reads as 4
+- ocr: the name is the right line on a photo taken at an angle, survives a line OCR split in two, and keeps its accents
+- ocr: a barcode too soft to decode is still located, so the form is read; uncertain digits are then left empty rather than guessed
+- ocr: a large photo no longer fills only the IBAN on a phone low on memory
+- app: a new version shows when the app is opened again, and an open app offers to update
 
 ## [2026-11-08]
 
