@@ -91,12 +91,18 @@ const LINE_TEXT_HEIGHT = 48;
  * height and read as a single line: a second reading, with other mistakes
  * than the page's, for the vote in vote.ts.
  */
-export async function ocrLine(canvas: HTMLCanvasElement, box: BBox): Promise<{ text: string; confidence: number }> {
+export async function ocrLine(
+  canvas: HTMLCanvasElement,
+  box: BBox,
+  /** Margin above and below, as a share of the box height. A box known tight to its line, with
+   * the next line right under it, takes a small one. */
+  padY = 0.3,
+): Promise<{ text: string; confidence: number }> {
   const h = box.y1 - box.y0;
   const left = Math.max(0, Math.round(box.x0 - h * 0.5));
-  const top = Math.max(0, Math.round(box.y0 - h * 0.3));
+  const top = Math.max(0, Math.round(box.y0 - h * padY));
   const width = Math.min(canvas.width - left, Math.round(box.x1 - box.x0 + h));
-  const height = Math.min(canvas.height - top, Math.round(h * 1.6));
+  const height = Math.min(canvas.height - top, Math.round(h * (1 + padY * 2)));
   if (width < 8 || height < 8) return { text: "", confidence: 0 };
   const scale = LINE_TEXT_HEIGHT / h;
   const pad = 24;
@@ -307,7 +313,8 @@ export async function ocrGridDigits(
     const reading: CellReading & { k: number; confidence: number } = { k, confidence: 100, cells: [] };
     for (let i = 0; i < tiles.length; i++) {
       const t = tiles[i];
-      if (!t) continue;
+      // No digit is wider than tall: a wide shape is the amount's "=" or a scrap of a rule.
+      if (!t || t.aspect > 1.2) continue;
       const cell = await readCell(w, tileCanvas(t), t.aspect);
       const good = isGoodCell(cell);
       if (good) reading.confidence = Math.min(reading.confidence, cell.confidence);

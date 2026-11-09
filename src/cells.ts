@@ -343,9 +343,11 @@ export function gridTiles(
   // Only character-shaped ink counts: the bracket strokes at the row's ends (the KS's ┐)
   // are thinner and taller than any digit, and once pulled the grid a box the wrong way.
   const charLike = letters.filter((c) => size(c).w >= size(c).h * 0.2 && size(c).h <= typical * 1.25);
+  // A grid one box out leaves its stray character within a box of its end; ink further out
+  // is the next field (K. SPRAC.'s 3 stands 1.4 boxes right of the amount's cent boxes).
   const outside = (o: number) => charLike.filter((c) => {
     const i = nearest(mid(c).x - o);
-    return i < 0 || i >= cells.length;
+    return i === -1 || i === cells.length;
   }).length;
   let offset = median;
   for (const o of [median - pitch, median + pitch]) if (outside(o) < outside(offset)) offset = o;
