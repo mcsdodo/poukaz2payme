@@ -1137,10 +1137,46 @@ async function saveQr(btn: HTMLElement): Promise<void> {
 // ---------- Offline ----------
 
 /** The service worker exists only in the build (vite.config.ts writes it). */
+/**
+ * Registers the service worker and offers a new version as soon as it is
+ * installed. An installed app reopened from the recent apps list only resumes:
+ * it never reloads, so the new worker would wait for good. So the app checks
+ * for an update whenever it comes to the front, and the bar's button switches.
+ */
 function registerServiceWorker(): void {
   if (!import.meta.env.PROD || !("serviceWorker" in navigator)) return;
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").catch((e) => console.warn("service worker", e));
+  const sw = navigator.serviceWorker;
+  // The first install also changes the controller (clients.claim); that is no reason to reload.
+  const hadController = !!sw.controller;
+  let reloading = false;
+  sw.addEventListener("controllerchange", () => {
+    if (!hadController || reloading) return;
+    reloading = true;
+    location.reload();
+  });
+  window.addEventListener("load", async () => {
+    try {
+      const reg = await sw.register("sw.js", { updateViaCache: "none" });
+      const offer = () => {
+        if (reg.waiting && sw.controller) $("update-bar").hidden = false;
+      };
+      offer();
+      reg.addEventListener("updatefound", () => {
+        const w = reg.installing;
+        w?.addEventListener("statechange", () => {
+          if (w.state === "installed") offer();
+        });
+      });
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) void reg.update().catch(() => {});
+      });
+      $("btn-update").addEventListener("click", () => {
+        if (reg.waiting) reg.waiting.postMessage("skip-waiting");
+        else location.reload();
+      });
+    } catch (e) {
+      console.warn("service worker", e);
+    }
   });
 }
 
