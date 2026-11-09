@@ -263,7 +263,7 @@ function enterLandscape(): Promise<string> {
   const root = document.documentElement;
   if (!isPhone) return Promise.resolve("not a phone");
   if (!orientation?.lock || !root.requestFullscreen) return Promise.resolve("no orientation lock");
-  return root
+  const locked = root
     .requestFullscreen({ navigationUI: "hide" })
     .then(() => orientation.lock!("landscape"))
     .then(
@@ -273,7 +273,12 @@ function enterLandscape(): Promise<string> {
         return `refused: ${e instanceof Error ? e.message : String(e)}`;
       },
     );
+  // The camera waits for this. A lock that never settles must not keep it from starting.
+  const timeout = new Promise<string>((r) => setTimeout(() => r(`no answer in ${LOCK_WAIT_MS} ms`), LOCK_WAIT_MS));
+  return Promise.race([locked, timeout]);
 }
+
+const LOCK_WAIT_MS = 2000;
 
 function leaveLandscape(): void {
   if (!document.fullscreenElement) return;
@@ -425,7 +430,7 @@ async function scanLoop(): Promise<void> {
           ? `Vidím ${other.format}, hľadám čiarový kód poukazu...`
           : hits.length
             ? "Kód nevyzerá ako poukaz, skúste priblížiť."
-            : `Hľadám čiarový kód... (${frames})`;
+            : `Hľadám čiarový kód... (${frames}, ${frame.width}x${frame.height}${nativeFormats.length ? "" : ", zxing"})`;
       // A browser cannot open the camera app by itself: it needs a tap, so this offers a button.
       if (!good && performance.now() - started > NATIVE_HINT_MS && $("btn-native").hidden) {
         $("btn-native").hidden = false;
