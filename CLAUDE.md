@@ -158,6 +158,16 @@ everything. So OCR never gets a plain video frame when a photo is possible:
     shares 4 letters with the label is OCR's own garbled reading of it and is skipped.
     [test/fixtures/poukaz-real-form-2.lines.json](test/fixtures/poukaz-real-form-2.lines.json)
     is that photo, after deskew.
+  - **Name vote ([vote.ts](src/vote.ts)):** the payee's first line is printed twice (the
+    stub and the middle ADRESÁT block, `nameCopies`), and `ocrLine` reads each copy again
+    from its own crop, so there are up to four readings. They are aligned letter by letter to
+    the middle one, and each place takes the choice with the most confidence. Readings
+    further than 0.4 from the middle one are of another line and are left out. One photo gave
+    `SF OJENÁ`, `ŠSPOJENÁ`, `"SPOJENÁ` and `[5 JENA`; the vote gave `SPOJENÁ`. What made it
+    work: box marks and quotes are dropped first; a letter for a space costs more than an
+    insertion, so a split word does not lose a letter; and an accent wins unless the plain
+    letter has more than twice its weight, because OCR drops accents far more often than it
+    adds them. `diag.nameVote` lists the readings.
   - The digit pass under the SUMA label must agree with the amount in words (it once gave
     `1` at confidence 17 for 37 in words), or have confidence >= 60 without words.
 - **Tesseract traps:** a character tile needs a wide white margin (at 14 px a clean `9`

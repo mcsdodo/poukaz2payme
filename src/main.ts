@@ -11,7 +11,8 @@ import { decodeCanvas, isSteady, lastZxingError, nativeFormats, orientationFromC
 import { extractFields, type BBox, type Extracted, type ExtractResult } from "./extract";
 import { bankName, formatIban, isValidIban, normalizeIban, splitSkIban, isValidLegacyPart } from "./iban";
 import { flattenLight } from "./light";
-import { getOcrWorker, ocrBoxedDigits, ocrDigits, ocrPage, setOcrProgress } from "./ocr";
+import { getOcrWorker, ocrBoxedDigits, ocrDigits, ocrLine, ocrPage, setOcrProgress } from "./ocr";
+import { consensus, type Reading } from "./vote";
 import { buildBySquare, buildPaymeLink, formatAmount, parseAmount, PaymeError } from "./payme";
 import { completeKs, isKnownKsClass } from "./ks";
 import { parsePoukazBarcode, productAdvice, type PoukazBarcode } from "./poukaz";
@@ -600,6 +601,7 @@ async function processImage(input: HTMLCanvasElement, extraRotation: number, cap
     step("digits");
     setWork("Dočítavam číselné polia...");
     await secondPass(ocrCanvas, flat, ex, diag);
+    await voteName(ocrCanvas, ex, diag);
 
     diag.barcode = barcode;
     merge(barcode, ex, ocrCanvas);
@@ -683,6 +685,26 @@ function handleOtherCodes(hits: BarcodeHit[]): void {
       }
     }
   }
+}
+
+/**
+ * The name is printed twice, on the stub and in the middle ADRESÁT block. Each
+ * copy is read by the page OCR and again from its own crop, and the letters
+ * are put to a vote (vote.ts). One photo read "SF OJENÁ" on the stub and
+ * "ŠSPOJENÁ" in the middle; neither alone was right.
+ */
+async function voteName(ocrCanvas: HTMLCanvasElement, ex: ExtractResult, diag: Record<string, unknown>): Promise<void> {
+  const copies = (ex.nameCopies ?? []).filter((c) => c.bbox);
+  if (!ex.name || !copies.length) return;
+  const readings: Reading[] = [];
+  for (const c of copies) {
+    readings.push({ text: c.value, confidence: c.confidence });
+    readings.push(await ocrLine(ocrCanvas, c.bbox!));
+  }
+  const voted = consensus(readings);
+  diag.nameVote = { readings: readings.map((r) => `${r.text} (${Math.round(r.confidence)})`), result: voted?.text, used: voted?.used };
+  // The page's own reading stands when the others were of other lines.
+  if (voted && voted.used >= 2) ex.name = { ...ex.name, value: voted.text.replace(/[\s,;.]+$/, "") };
 }
 
 /** The digit pass under the SUMA label, when there are no amount words to check it against. */

@@ -7,6 +7,7 @@
 
 ### Fixed
 - ocr: the name is the first address line, not the town, on a photo taken at an angle
+- ocr: the name is read from both printed copies and voted letter by letter, so a misread letter or a lost accent is corrected
 - ocr: a boxed 1 no longer reads as 4
 - app: a new version shows when the app is opened again, and an open app offers to update
 - ocr: a shadow over the form no longer blacks out half of it; the light is evened out before OCR

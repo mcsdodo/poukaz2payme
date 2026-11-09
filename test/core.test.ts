@@ -6,6 +6,7 @@ import { buildBySquare, buildPaymeLink, parseAmount, toAscii } from "../src/paym
 import { extractFields, findIban, type OcrLine } from "../src/extract";
 import { segmentCells } from "../src/cells";
 import { flattenLight } from "../src/light";
+import { consensus } from "../src/vote";
 import { fitLayout } from "../src/layout";
 import { rotatePoint, rotatedSize, zoneSkew } from "../src/deskew";
 import { isSteady } from "../src/barcode";
@@ -302,6 +303,9 @@ describe("OCR extraction on a real form taken at an angle", () => {
     expect(r.layout?.added).toContain("ADRESÁT");
     expect(r.name?.value).toBe("ZÁ KLADNÁ ŠKOLA, VZOROVÁ CESTA 1");
   });
+  it("finds both printed copies of the name, for the vote", () => {
+    expect(r.nameCopies?.map((c) => c.value).sort()).toEqual(["ZÁ KLADNÁ ŠKOLA, VZOROVÁ CESTA 1", "ŠZÁKLADNÁ ŠKOLA, VZOROVÁ CESTA 1,"].sort());
+  });
   it("reads the amount", () => {
     expect(r.amount?.value).toBe("28,50");
     expect(r.amountWords?.euros).toBe(28);
@@ -399,6 +403,38 @@ describe("segmentCells", () => {
   });
   it("returns nothing for an empty crop", () => {
     expect(segmentCells(page(100, 40, []), 0.5)).toEqual([]);
+  });
+});
+
+// Readings of one printed name line: the stub and the middle copy, each from the page OCR
+// and from its own crop. The mistakes are the ones seen on real photos, on fake text.
+describe("name vote", () => {
+  const vote = (rs: [string, number][]) => consensus(rs.map(([text, confidence]) => ({ text, confidence })));
+  it("fixes a letter no single reading got right", () => {
+    // Seen: "SF OJENÁ" on the stub, "ŠSPOJENÁ" and '"SPOJENÁ' in the middle copy.
+    const r = vote([
+      ["ZF KLADNÁ ŠKOLA, VZOROVÁ CESTA 1", 90],
+      ["[5 KLADNA ŠKOLA, VZOROVA CESTA 1,", 81],
+      ["ŠZÁKLADNÁ ŠKOLA, VZOROVÁ CESTA 1,", 83],
+      ['"ZÁKLADNÁ „ŠKOLA, VZOROVÁ CESTA 1,', 87],
+    ]);
+    expect(r?.text).toBe("ZÁKLADNÁ ŠKOLA, VZOROVÁ CESTA 1,");
+  });
+  it("keeps an accent that one reading dropped", () => {
+    const r = vote([
+      ["ZAKLADNA SKOLA, VZOROVA CESTA 1", 93],
+      ["ZÁKLADNÁ ŠKOLA, VZOROVÁ CESTA 1,", 93],
+      ['"ZÁKLADNÁ OVCE VIZOROVÁ CESTA 1,', 50],
+      ["", 0],
+    ]);
+    expect(r?.text).toBe("ZÁKLADNÁ ŠKOLA, VZOROVÁ CESTA 1,");
+  });
+  it("drops an accent that only a weak reading has", () => {
+    expect(vote([["SKOLA", 90], ["SKOLA", 90], ["ŠKOLA", 60]])?.text).toBe("SKOLA");
+  });
+  it("leaves out readings of another line", () => {
+    const r = vote([["ZÁKLADNÁ ŠKOLA, VZOROVÁ CESTA 1", 90], ["| ZASA doom", 28]]);
+    expect(r).toEqual({ text: "ZÁKLADNÁ ŠKOLA, VZOROVÁ CESTA 1", used: 1 });
   });
 });
 
