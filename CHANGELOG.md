@@ -6,6 +6,9 @@
 - camera: on Android the live view goes fullscreen and turns to landscape, where the form is larger in the frame
 
 ### Fixed
+- camera: the photo is taken without flash, and the camera turns off right after the shot
+- ocr: boxed digits are voted across thresholds, so one misread threshold no longer gives a wrong VS or KS
+- ocr: the name survives a stub cut by the photo's edge or a line OCR split in two
 - ocr: the name is the first address line, not the town, on a photo taken at an angle
 - ocr: the name is read from both printed copies and voted letter by letter, so a misread letter or a lost accent is corrected
 - ocr: a boxed 1 no longer reads as 4

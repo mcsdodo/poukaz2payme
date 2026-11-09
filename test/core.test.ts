@@ -4,7 +4,7 @@ import { bbanToIban, isValidIban, isValidLegacyPart, mod97 } from "../src/iban";
 import { mod11CheckDigit, parsePoukazBarcode } from "../src/poukaz";
 import { buildBySquare, buildPaymeLink, parseAmount, toAscii } from "../src/payme";
 import { extractFields, findIban, type OcrLine } from "../src/extract";
-import { segmentCells } from "../src/cells";
+import { segmentCells, voteCells } from "../src/cells";
 import { flattenLight } from "../src/light";
 import { consensus } from "../src/vote";
 import { fitLayout } from "../src/layout";
@@ -432,9 +432,48 @@ describe("name vote", () => {
   it("drops an accent that only a weak reading has", () => {
     expect(vote([["SKOLA", 90], ["SKOLA", 90], ["ŠKOLA", 60]])?.text).toBe("SKOLA");
   });
+  it("does not cut the name short when some readings stop early", () => {
+    // Seen: the stub line split by OCR, and its crop read only to "MARKU".
+    const r = vote([
+      ["ZÁKLADNÁ ŠKOLA, VZOR!", 78],
+      ["ZÁKLADNÁ ŠKOLA, VZO", 94],
+      ["ZÁKLADNÁ Hy VZOROVÁ CESTA 1,", 66],
+    ]);
+    expect(r?.text).toBe("ZÁKLADNÁ ŠKOLA, VZOROVÁ CESTA 1,");
+  });
+  it("keeps a first letter the cut stub lost", () => {
+    const r = vote([
+      ["ÁKLADNÁ ŠKOLA, VZOROVÁ CESTA 1", 92],
+      ["AKLADNA SKOLA, VZOROVA CESTA 1", 90],
+      ["ZÁKLADNÁ ŠKOLA, VZOROVÁ CESTA 1,", 88],
+      ["ZÁKLADNÁ ŠKOLA, VZOROVÁ CESTA 1", 85],
+    ]);
+    expect(r?.text.replace(/,$/, "")).toBe("ZÁKLADNÁ ŠKOLA, VZOROVÁ CESTA 1");
+  });
   it("leaves out readings of another line", () => {
     const r = vote([["ZÁKLADNÁ ŠKOLA, VZOROVÁ CESTA 1", 90], ["| ZASA doom", 28]]);
     expect(r).toEqual({ text: "ZÁKLADNÁ ŠKOLA, VZOROVÁ CESTA 1", used: 1 });
+  });
+});
+
+describe("voteCells", () => {
+  const reading = (s: string, at = 0) => ({ cells: [...s].map((ch, i) => ({ center: at + i * 50, inkHeight: 40, ch: ch === "?" ? null : ch })) });
+  it("takes the digit most thresholds read", () => {
+    // Seen: 0.4 read 112513 at 88 for a printed 112613; 0.5 and 0.6 read the 6.
+    expect(voteCells([reading("112613"), reading("112513"), reading("112613")]).join("")).toBe("112613");
+  });
+  it("leaves a place unreadable when two thresholds disagree", () => {
+    expect(voteCells([reading("112613"), reading("112513")])).toEqual(["1", "1", "2", null, "1", "3"]);
+  });
+  it("fills a place one threshold could not read", () => {
+    expect(voteCells([reading("??2613"), reading("112613")]).join("")).toBe("112613");
+  });
+  it("drops a shape only one of three thresholds saw", () => {
+    const speck = { cells: [...reading("0179").cells, { center: 260, inkHeight: 40, ch: "1" }] };
+    expect(voteCells([reading("0179"), speck, reading("0179")]).join("")).toBe("0179");
+  });
+  it("matches characters that moved a few pixels between thresholds", () => {
+    expect(voteCells([reading("0179", 0), reading("0179", 6), reading("0479", 3)]).join("")).toBe("0179");
   });
 });
 

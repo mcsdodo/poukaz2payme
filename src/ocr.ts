@@ -2,7 +2,7 @@
 // into /vendor at build time (scripts/copy-assets.mjs). Nothing leaves the device.
 
 import { createWorker, OEM, PSM, type Worker } from "tesseract.js";
-import { segmentCells } from "./cells";
+import { segmentCells, voteCells, type CellReading } from "./cells";
 import type { BBox, OcrLine } from "./extract";
 
 export type Progress = (status: string, progress: number) => void;
@@ -160,10 +160,11 @@ async function readCell(w: Worker, tile: HTMLCanvasElement, aspect: number): Pro
 }
 
 /**
- * Reads a boxed number one character at a time. A reading that fails
- * `plausible` does not stop the search for a better threshold. The result counts only when
- * every character is confident, otherwise the next threshold is tried. Takes
- * the color image, because the cell borders are in the printed form color.
+ * Reads a boxed number one character at a time, at several ink thresholds.
+ * Two complete readings that agree settle it; otherwise every threshold is
+ * read and the characters are voted (voteCells). The result counts only when
+ * every character is known. Takes the color image, because the cell borders
+ * are in the printed form color.
  */
 export async function ocrBoxedDigits(
   canvas: HTMLCanvasElement,
@@ -192,16 +193,16 @@ export async function ocrBoxedDigits(
   const w = await getOcrWorker();
   await w.setParameters({ tessedit_char_whitelist: "0123456789", user_defined_dpi: "300" });
   const attempts: string[] = [];
-  const partials: (string | null)[][] = [];
-  let firstRead: { text: string; confidence: number; threshold: number } | undefined;
+  const readings: (CellReading & { k: number; confidence: number })[] = [];
+  const complete = (r: CellReading) => r.cells.every((c) => c.ch !== null);
+  const textOf = (r: CellReading) => r.cells.map((c) => c.ch ?? "?").join("");
   for (const k of CELL_THRESHOLDS) {
     const tiles = segmentCells(img, k);
     if (!tiles.length || tiles.length > maxLen) {
       attempts.push(`${k}: ${tiles.length} shapes`);
       continue;
     }
-    const cells: (string | null)[] = [];
-    let confidence = 100;
+    const reading: CellReading & { k: number; confidence: number } = { k, confidence: 100, cells: [] };
     const read: string[] = [];
     for (const t of tiles) {
       const c = document.createElement("canvas");
@@ -210,23 +211,26 @@ export async function ocrBoxedDigits(
       c.getContext("2d")!.putImageData(new ImageData(new Uint8ClampedArray(t.data), t.width, t.height), 0, 0);
       const cell = await readCell(w, c, t.aspect);
       read.push(`${cell.ch || "?"}(${Math.round(cell.confidence)})`);
-      if (isGoodCell(cell)) {
-        cells.push(cell.ch);
-        confidence = Math.min(confidence, cell.confidence);
-      } else {
-        cells.push(null);
-      }
+      const good = isGoodCell(cell);
+      if (good) reading.confidence = Math.min(reading.confidence, cell.confidence);
+      reading.cells.push({ center: t.center, inkHeight: t.inkHeight, ch: good ? cell.ch : null });
     }
     attempts.push(`${k}: ${read.join(" ")}`);
-    if (cells.includes(null)) {
-      if (cells.length === maxLen) partials.push(cells);
-      continue;
-    }
-    const text = cells.join("");
-    if (text.length < minLen) continue;
-    if (plausible(text)) return { text, confidence, threshold: k, attempts, partials };
-    firstRead ??= { text, confidence, threshold: k };
+    readings.push(reading);
+    // Two complete readings that agree: no third threshold can outvote them. An implausible
+    // pair (a KS of no known class) still lets the third threshold join the vote.
+    const done = readings.filter(complete);
+    if (done.length >= 2 && done.every((r) => textOf(r) === textOf(done[0])) && plausible(textOf(done[0]))) break;
   }
+
+  const cells = voteCells(readings);
+  const partials = cells.includes(null) && cells.length === maxLen ? [cells] : [];
+  const text = cells.includes(null) ? "" : cells.join("");
+  if (readings.length > 1) attempts.push(`vote: ${cells.map((c) => c ?? "?").join("")}`);
+  if (!text || text.length < minLen) return { text: "", confidence: 0, attempts, partials };
+  // The weakest character of the readings that agree with the result.
+  const agreeing = readings.filter((r) => complete(r) && textOf(r) === text);
+  const confidence = agreeing.length ? Math.max(...agreeing.map((r) => r.confidence)) : MIN_CELL_CONFIDENCE;
   // A confident but implausible reading is still the best evidence: keep it, the caller flags it.
-  return firstRead ? { ...firstRead, attempts, partials } : { text: "", confidence: 0, attempts, partials };
+  return { text, confidence, threshold: agreeing[0]?.k, attempts, partials };
 }

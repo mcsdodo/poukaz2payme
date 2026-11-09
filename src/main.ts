@@ -138,18 +138,34 @@ function cropToForm(src: HTMLCanvasElement, quad: Point[]): { canvas: HTMLCanvas
   const xs = quad.map((p) => p.x);
   const ys = quad.map((p) => p.y);
   const code = Math.max(...xs) - Math.min(...xs);
-  const x0 = Math.max(0, Math.floor(Math.min(...xs) - code * 1.15));
-  const x1 = Math.min(src.width, Math.ceil(Math.max(...xs) + code * 0.45));
-  const y0 = Math.max(0, Math.floor(Math.min(...ys) - code * 1.15));
-  const y1 = Math.min(src.height, Math.ceil(Math.max(...ys) + code * 0.35));
+  // The wanted area, which can reach past the photo: a form that fills the frame has its
+  // stub at the photo's edge. That part stays white: with it, the stub's name line on one
+  // photo read in full ("SPOJENÁ" where it had read "SF OJENÁ").
+  const wx0 = Math.floor(Math.min(...xs) - code * 1.15);
+  const wx1 = Math.ceil(Math.max(...xs) + code * 0.45);
+  const wy0 = Math.floor(Math.min(...ys) - code * 1.15);
+  const wy1 = Math.ceil(Math.max(...ys) + code * 0.35);
+  const x0 = Math.max(0, wx0);
+  const x1 = Math.min(src.width, wx1);
+  const y0 = Math.max(0, wy0);
+  const y1 = Math.min(src.height, wy1);
+  // A white margin of a tenth of the code width is enough; more only costs OCR time.
+  const margin = code * 0.1;
+  const left = Math.min(x0 - wx0, margin);
+  const right = Math.min(wx1 - x1, margin);
+  const top = Math.min(y0 - wy0, margin);
+  const bottom = Math.min(wy1 - y1, margin);
   const scale = Math.min(MAX_FORM_UPSCALE, FORM_WIDTH / (code * FORM_PER_CODE));
   const c = document.createElement("canvas");
-  c.width = Math.round((x1 - x0) * scale);
-  c.height = Math.round((y1 - y0) * scale);
+  c.width = Math.round((x1 - x0 + left + right) * scale);
+  c.height = Math.round((y1 - y0 + top + bottom) * scale);
   const ctx = c.getContext("2d", { willReadFrequently: true })!;
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, c.width, c.height);
   ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(src, x0, y0, x1 - x0, y1 - y0, 0, 0, c.width, c.height);
-  return { canvas: c, note: `${x1 - x0}x${y1 - y0} of ${src.width}x${src.height}, scale ${scale.toFixed(2)}` };
+  ctx.drawImage(src, x0, y0, x1 - x0, y1 - y0, left * scale, top * scale, (x1 - x0) * scale, (y1 - y0) * scale);
+  const pads = [left, top, right, bottom].map((p) => Math.round(p * scale)).join("/");
+  return { canvas: c, note: `${x1 - x0}x${y1 - y0} of ${src.width}x${src.height}, scale ${scale.toFixed(2)}, white l/t/r/b ${pads}` };
 }
 
 /** A copy with the paper made evenly white, so a shadow does not black out half the form. */
@@ -242,8 +258,8 @@ const isPhone = matchMedia("(pointer: coarse)").matches;
 const NATIVE_HINT_MS = 8000;
 
 interface ImageCaptureLike {
-  getPhotoCapabilities(): Promise<{ imageWidth?: { max?: number }; imageHeight?: { max?: number } }>;
-  takePhoto(settings?: { imageWidth?: number; imageHeight?: number }): Promise<Blob>;
+  getPhotoCapabilities(): Promise<{ imageWidth?: { max?: number }; imageHeight?: { max?: number }; fillLightMode?: string[] }>;
+  takePhoto(settings?: { imageWidth?: number; imageHeight?: number; fillLightMode?: string }): Promise<Blob>;
 }
 
 interface OrientationLock {
@@ -311,10 +327,6 @@ async function startCamera(): Promise<void> {
   state.diag.camera = { settings: track.getSettings(), torch: !!caps.torch, focusModes: caps.focusMode };
 }
 
-function pauseCamera(): void {
-  scanning = false;
-  stream?.getVideoTracks().forEach((t) => (t.enabled = false));
-}
 
 async function setTorch(on: boolean): Promise<void> {
   const track = stream?.getVideoTracks()[0];
@@ -347,17 +359,26 @@ async function grabStill(): Promise<Still | null> {
   if (track && IC) {
     const capture = new IC(track);
     let largest: { imageWidth: number; imageHeight: number } | undefined;
+    // No flash: Chrome's default lit it for the shot and the light stayed on while OCR ran.
+    // A flash also puts a glare on the paper; the Svetlo button gives steady light instead.
+    let light: { fillLightMode?: string } = {};
     try {
       const caps = await capture.getPhotoCapabilities();
       if (caps.imageWidth?.max && caps.imageHeight?.max) largest = { imageWidth: caps.imageWidth.max, imageHeight: caps.imageHeight.max };
+      if (caps.fillLightMode?.includes("off")) light = { fillLightMode: "off" };
     } catch (e) {
       errors.push(`capabilities: ${String(e)}`);
     }
-    for (const settings of largest ? [largest, undefined] : [undefined]) {
+    // Largest without flash, then the browser's size without flash, then anything it takes.
+    const tries: ({ imageWidth?: number; imageHeight?: number; fillLightMode?: string } | undefined)[] = [];
+    if (largest) tries.push({ ...largest, ...light });
+    if (light.fillLightMode) tries.push(light);
+    tries.push(undefined);
+    for (const settings of tries) {
       try {
         const blob = await capture.takePhoto(settings);
         const bmp = await createImageBitmap(blob, { imageOrientation: "from-image" }).catch(() => createImageBitmap(blob));
-        const source = `takePhoto ${bmp.width}x${bmp.height}${settings ? "" : " (default size)"}`;
+        const source = `takePhoto ${bmp.width}x${bmp.height}${settings?.imageWidth ? "" : " (default size)"}${settings?.fillLightMode ? ", no flash" : ""}`;
         const canvas = canvasFrom(bmp, bmp.width, bmp.height, 3200);
         bmp.close();
         return { canvas, source };
@@ -455,7 +476,8 @@ async function shoot(fallback?: HTMLCanvasElement): Promise<void> {
   try {
     $("cam-status").textContent = "Držte telefón, fotím...";
     let still = await grabStill();
-    pauseCamera();
+    // Release the camera, not only pause it: a paused track keeps the camera and any light on.
+    stopCamera();
     if (still && fallback && still.source.startsWith("takePhoto")) {
       const check = canvasFrom(still.canvas, still.canvas.width, still.canvas.height, 2400);
       const hits = await decodePoukaz(check).catch(() => [] as BarcodeHit[]);
@@ -476,6 +498,7 @@ function stopCamera(): void {
   scanning = false;
   stream?.getTracks().forEach((t) => t.stop());
   stream = null;
+  torchOn = false;
 }
 
 // ---------- Pipeline ----------
@@ -695,7 +718,7 @@ function handleOtherCodes(hits: BarcodeHit[]): void {
  */
 async function voteName(ocrCanvas: HTMLCanvasElement, ex: ExtractResult, diag: Record<string, unknown>): Promise<void> {
   const copies = (ex.nameCopies ?? []).filter((c) => c.bbox);
-  if (!ex.name || !copies.length) return;
+  if (!copies.length) return;
   const readings: Reading[] = [];
   for (const c of copies) {
     readings.push({ text: c.value, confidence: c.confidence });
@@ -704,7 +727,7 @@ async function voteName(ocrCanvas: HTMLCanvasElement, ex: ExtractResult, diag: R
   const voted = consensus(readings);
   diag.nameVote = { readings: readings.map((r) => `${r.text} (${Math.round(r.confidence)})`), result: voted?.text, used: voted?.used };
   // The page's own reading stands when the others were of other lines.
-  if (voted && voted.used >= 2) ex.name = { ...ex.name, value: voted.text.replace(/[\s,;.]+$/, "") };
+  if (voted && voted.used >= 2) ex.name = { ...(ex.name ?? copies[0]), value: voted.text.replace(/[\s,;.]+$/, "") };
 }
 
 /** The digit pass under the SUMA label, when there are no amount words to check it against. */
@@ -746,6 +769,12 @@ async function secondPass(
     // crop edge and segmentCells drops it. VS and SS have ten cells.
     const max = key === "ks" ? 4 : 10;
     const rect: BBox = { x0: b.x0 - w * 0.15, y0: b.y1 - h * 0.6, x1: b.x1 + w * (key === "ks" ? 0.6 : 1.4), y1: b.y1 + h * 3 };
+    // The VS boxes end where the KS boxes start, under the KS label. Past it the crop took
+    // KS's first 0 as a seventh VS digit (1126130 for 112613).
+    const ks = ex.ks?.labelBox;
+    if (key !== "ks" && ks && ks.x0 > b.x1 && Math.abs((ks.y0 + ks.y1) / 2 - (b.y0 + b.y1) / 2) <= h * 1.5) {
+      rect.x1 = Math.min(rect.x1, ks.x0 - h * 0.1);
+    }
     // A single isolated shape is a reading that lost the rest (seen: VS "1" for 112606).
     const r = await ocrBoxedDigits(colorCanvas, rect, max, key === "ks" ? isKnownKsClass : undefined, key === "ks" ? 4 : 2);
     tries[key] = { ...r, rect: roundBox(rect) };
@@ -1296,7 +1325,7 @@ function wire(): void {
   $("btn-retry-photo").addEventListener("click", openCameraApp);
   $("btn-torch").addEventListener("click", () => void setTorch(!torchOn));
   $("btn-cam-cancel").addEventListener("click", () => {
-    pauseCamera();
+    stopCamera();
     show("start");
   });
 

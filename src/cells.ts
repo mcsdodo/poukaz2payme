@@ -9,6 +9,52 @@ export interface Tile {
   data: Uint8ClampedArray;
   /** Width over height of the character itself, without the margin. */
   aspect: number;
+  /** Middle of the character and its height, in crop pixels, to match it across thresholds. */
+  center: number;
+  inkHeight: number;
+}
+
+/** One threshold's reading: each character where it stands, null when unreadable. */
+export interface CellReading {
+  cells: { center: number; inkHeight: number; ch: string | null }[];
+}
+
+/**
+ * Votes the characters of several threshold readings of one boxed field. A
+ * threshold can change a shape: at 0.4 a printed 6 lost its loop and read as a
+ * confident 5, while 0.5 read 6. Characters are matched by position. A place
+ * fewer than half the readings saw is a speck one threshold made, but only when
+ * two complete readings agree without it: a threshold also loses real digits
+ * (0.5 read KS 017, 0.6 read 0179). A place's character is the one most readings
+ * agree on; a tie between two different characters is unreadable, never a guess.
+ */
+export function voteCells(readings: CellReading[]): (string | null)[] {
+  const all = readings.flatMap((r, i) => r.cells.map((c) => ({ ...c, reading: i })));
+  if (!all.length) return [];
+  const heights = all.map((c) => c.inkHeight).sort((a, b) => a - b);
+  const tolerance = heights[heights.length >> 1] * 0.5;
+  all.sort((a, b) => a.center - b.center);
+  const places: (typeof all)[] = [];
+  for (const c of all) {
+    const last = places[places.length - 1];
+    if (last && c.center - last[0].center <= tolerance) last.push(c);
+    else places.push([c]);
+  }
+  const complete = readings.map((r) => r.cells.every((c) => c.ch !== null));
+  const out: (string | null)[] = [];
+  for (const place of places) {
+    const seen = new Set(place.map((c) => c.reading));
+    if (seen.size * 2 < readings.length) {
+      const without = readings.map((_, i) => i).filter((i) => !seen.has(i) && complete[i]);
+      const agree = without.length >= 2 && without.every((i) => readings[i].cells.map((c) => c.ch).join("") === readings[without[0]].cells.map((c) => c.ch).join(""));
+      if (agree || !place.some((c) => c.ch)) continue;
+    }
+    const counts = new Map<string, number>();
+    for (const c of place) if (c.ch) counts.set(c.ch, (counts.get(c.ch) ?? 0) + 1);
+    const ranked = [...counts].sort((a, b) => b[1] - a[1]);
+    out.push(ranked.length && (ranked.length === 1 || ranked[0][1] > ranked[1][1]) ? ranked[0][0] : null);
+  }
+  return out;
 }
 
 interface Image {
@@ -108,6 +154,6 @@ export function segmentCells(img: Image, k: number): Tile[] {
           }
         }
       }
-      return { x: c.x0, width: tw, height: th, data: out, aspect: cw / ch };
+      return { x: c.x0, width: tw, height: th, data: out, aspect: cw / ch, center: c.x0 + cw / 2, inkHeight: ch };
     });
 }

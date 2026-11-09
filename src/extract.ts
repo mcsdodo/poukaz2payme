@@ -282,9 +282,48 @@ function findCentsBelowLabel(lines: OcrLine[]): Extracted | undefined {
   return undefined;
 }
 
+/**
+ * The line with the pieces OCR split off it on the same row, left to right. One
+ * photo gave "SPOJENÁ ŠKOLA, MARKUŠ" and "OVSKÁ CESTA 8" 2 px apart. A gap under
+ * a quarter of the line height is inside a word; up to one height, a space. The
+ * stub ends about 4 heights before the middle column starts, so the two copies
+ * never join; a label (the sender's MENO next to the middle copy) ends the line.
+ */
+function joinRow(lines: OcrLine[], first: OcrLine): OcrLine {
+  let cur = first;
+  let text = first.text;
+  const box = { ...first.bbox };
+  let confidence = first.confidence;
+  const used = new Set<OcrLine>([first]);
+  for (;;) {
+    const h = cur.bbox.y1 - cur.bbox.y0;
+    const cy = (cur.bbox.y0 + cur.bbox.y1) / 2;
+    const next = lines
+      .filter(
+        (l) =>
+          !l.predicted &&
+          !used.has(l) &&
+          l.bbox.x0 > cur.bbox.x0 &&
+          l.bbox.x0 >= cur.bbox.x1 - h * 0.2 &&
+          l.bbox.x0 - cur.bbox.x1 <= h &&
+          Math.abs((l.bbox.y0 + l.bbox.y1) / 2 - cy) <= h * 0.4,
+      )
+      .sort((a, b) => a.bbox.x0 - b.bbox.x0)[0];
+    if (!next || isLabelText(next.text)) break;
+    text += (next.bbox.x0 - cur.bbox.x1 < h * 0.25 ? "" : " ") + next.text;
+    box.x1 = next.bbox.x1;
+    box.y0 = Math.min(box.y0, next.bbox.y0);
+    box.y1 = Math.max(box.y1, next.bbox.y1);
+    confidence = Math.min(confidence, next.confidence);
+    used.add(next);
+    cur = next;
+  }
+  return { text, bbox: box, confidence };
+}
+
 function isLabelText(s: string): boolean {
   const t = strip(s);
-  return Object.values(LABELS).some((re) => re.test(t)) || /(ulica|psc|obec|odosielatel|cislo uctu|referen)/.test(t);
+  return Object.values(LABELS).some((re) => re.test(t)) || /(ulica|psc|obec|odosielatel|cislo uctu|referen|\bmeno\b|priezvisko|dodavacia)/.test(t);
 }
 
 const MIN_MESSAGE_CONFIDENCE = 40;
@@ -394,17 +433,23 @@ export function extractFields(ocrLines: OcrLine[]): ExtractResult {
   const textUnder = (label: OcrLine): Extracted | undefined => {
     for (const below of linesBelow(lines, label, 3)) {
       if (isLabelText(below.text)) continue;
-      const v = below.text.replace(/[|_[\]]/g, " ").replace(/\s+/g, " ").trim();
+      const line = joinRow(lines, below);
+      const v = line.text.replace(/[|_[\]]/g, " ").replace(/\s+/g, " ").trim();
       if (/[A-Za-zÀ-ž]{3,}/.test(v)) {
-        return { value: v, confidence: below.confidence, bbox: below.bbox, labelBox: label.bbox, predicted: label.predicted };
+        return { value: v, confidence: line.confidence, bbox: line.bbox, labelBox: label.bbox, predicted: label.predicted };
       }
     }
     return undefined;
   };
+  // Every label in turn: the stub's can have nothing under it when the photo cut the stub.
   for (const key of ["name", "message"] as const) {
-    const label = lines.find((l) => LABELS[key].test(strip(l.text)));
-    const found = label && textUnder(label);
-    if (found) res[key] = found;
+    for (const label of lines.filter((l) => LABELS[key].test(strip(l.text)))) {
+      const found = textUnder(label);
+      if (found) {
+        res[key] = found;
+        break;
+      }
+    }
   }
   const copies = lines
     .filter((l) => LABELS.name.test(strip(l.text)))

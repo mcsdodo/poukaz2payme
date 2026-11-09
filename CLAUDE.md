@@ -70,6 +70,10 @@ everything. So OCR never gets a plain video frame when a photo is possible:
   the lock but does not turn the viewport, so check the turn on a real phone.
 - **Safari, Firefox, any phone without `ImageCapture`:** "Skenovať kamerou" opens the
   phone's camera app (`<input capture>`), which gives a full photo. There is no live view.
+- **No flash, camera released:** `takePhoto` asks for `fillLightMode: "off"` where the
+  camera offers it (a flash glares on the paper, and on one phone the light stayed on after
+  the shot), and the shot stops the stream instead of pausing it: a paused track keeps the
+  camera and its light on while OCR runs. "Späť" stops it too.
 - **Fallbacks:** after 8 s without a code, the camera view offers the camera app; a live
   shot that misses VS or amount offers it on the result screen. A browser opens the camera
   app only from a tap, so both are buttons. The stream is stopped first: an iPhone cannot
@@ -167,7 +171,22 @@ everything. So OCR never gets a plain video frame when a photo is possible:
     work: box marks and quotes are dropped first; a letter for a space costs more than an
     insertion, so a split word does not lose a letter; and an accent wins unless the plain
     letter has more than twice its weight, because OCR drops accents far more often than it
-    adds them. `diag.nameVote` lists the readings.
+    adds them. Readings stop early (OCR split the line, or read it only to `MARKU`): the
+    alignment skips either end of the frame at half a letter's cost (free, it skipped
+    misread letters instead), a skip of 3 or more does not vote, and the frame is a reading
+    that reaches further than the middle one. At the line's two ends a letter some readings
+    lack wins unless its absence has twice its weight (a cut stub loses the first letter).
+    `joinRow` joins the pieces of a split line and stops at a label (`MENO` stands right of
+    the middle copy). `diag.nameVote` lists the readings.
+  - **Thresholds vote ([cells.ts](src/cells.ts), `voteCells`):** a threshold can change a
+    shape (at 0.4 a printed 6 read as a confident 5; 0.5 read 6), so the first complete
+    reading is not trusted alone. Two complete readings that agree (and are plausible) end it;
+    otherwise all three are read and each place takes the majority, a tie is unreadable. A
+    place fewer than half the readings saw is dropped only when two complete readings agree
+    without it: thresholds lose real digits too (0.5 read KS `017`, 0.6 `0179`). The VS crop
+    stops at the KS label, or it took KS's first `0` as a seventh VS digit.
+  - **Edges:** the form crop is drawn on white where it reaches past the photo, so text at
+    the photo's edge does not touch the image border.
   - The digit pass under the SUMA label must agree with the amount in words (it once gave
     `1` at confidence 17 for 37 in words), or have confidence >= 60 without words.
 - **Tesseract traps:** a character tile needs a wide white margin (at 14 px a clean `9`
