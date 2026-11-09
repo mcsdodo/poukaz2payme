@@ -4,7 +4,8 @@ import { bbanToIban, isValidIban, isValidLegacyPart, mod97 } from "../src/iban";
 import { mod11CheckDigit, parsePoukazBarcode } from "../src/poukaz";
 import { buildBySquare, buildPaymeLink, parseAmount, toAscii } from "../src/payme";
 import { extractFields, findIban, type OcrLine } from "../src/extract";
-import { segmentCells, voteCells } from "../src/cells";
+import { gridTiles, segmentCells, voteCells } from "../src/cells";
+import { accented } from "../src/text";
 import { flattenLight } from "../src/light";
 import { consensus } from "../src/vote";
 import { fitLayout } from "../src/layout";
@@ -453,6 +454,52 @@ describe("name vote", () => {
   it("leaves out readings of another line", () => {
     const r = vote([["ZÁKLADNÁ ŠKOLA, VZOROVÁ CESTA 1", 90], ["| ZASA doom", 28]]);
     expect(r).toEqual({ text: "ZÁKLADNÁ ŠKOLA, VZOROVÁ CESTA 1", used: 1 });
+  });
+});
+
+describe("gridTiles", () => {
+  // A row of 12 boxes, 40 px wide and 60 tall, at y 20-80, as the message prints them.
+  const cells = Array.from({ length: 12 }, (_, i) => ({ x0: 20 + i * 40, y0: 20, x1: 60 + i * 40, y1: 80 }));
+  // Letters 26 px tall stand on the rule at y 66; the grid's fit is 8 px off to the left.
+  const at = (box: number, dx = 0) => 20 + box * 40 + 12 + 8 + dx;
+  const img = page(540, 100, [
+    [at(0), 40, at(0) + 14, 66], // a capital
+    [at(1), 40, at(1) + 14, 66], // a capital with a caron
+    [at(1) + 4, 33, at(1) + 10, 37],
+    [at(2), 52, at(2) + 12, 56], // a hyphen
+    [at(3), 48, at(3) + 14, 66], // a lowercase letter
+    [at(11), 40, at(11) + 14, 66], // the last letter, crossed by the column's rule
+    [0, 66, 540, 68], // the rule under the row
+    [at(11) + 10, 0, at(11) + 13, 100], // the column's rule
+    [at(7) + 2, 50, at(7) + 4, 52], // dust in an empty box
+  ]);
+  const tiles = gridTiles(img, cells, 0.5);
+  it("puts each character in its box, empty boxes as null", () => {
+    expect(tiles.map((t) => (t ? "x" : "_")).join("")).toBe("xxxx_______x");
+  });
+  it("keeps a caron with its letter", () => {
+    expect(tiles[1]?.marks).toBe(1);
+    expect(tiles[0]?.marks).toBe(0);
+  });
+  it("keeps a letter standing on a rule, without the rule", () => {
+    expect(tiles[0]?.mainHeight).toBe(26);
+  });
+  it("tells a capital from a lowercase letter by height", () => {
+    expect(tiles[3]!.mainHeight).toBeLessThan(tiles[0]!.mainHeight * 0.8);
+  });
+  it("keeps the hyphen as a flat mark", () => {
+    expect(tiles[2]!.aspect).toBeGreaterThan(2);
+  });
+});
+
+describe("accents from marks", () => {
+  it("puts an acute on a vowel and a caron on a consonant", () => {
+    expect(accented("e", 1)).toBe("é");
+    expect(accented("Y", 1)).toBe("Ý");
+    expect(accented("C", 1)).toBe("Č");
+    expect(accented("s", 1)).toBe("š");
+    expect(accented("a", 2)).toBe("ä");
+    expect(accented("M", 1)).toBe("M");
   });
 });
 
