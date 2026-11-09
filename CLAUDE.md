@@ -51,13 +51,30 @@ Do not run `npm run build` while `npm run dev` runs. `copy-assets.mjs` rewrites
 ## Camera: the live view aims, a photo is what OCR reads
 
 A video frame puts the whole form at about 1000 px (a portrait 1080 px stream, guide frame
-at 90% of its width). On the real form that lost VS and KS; the same form at 1930 px read
+at 90% of its width; in landscape about 1700 px). On the real form that lost VS and KS; the same form at 1930 px read
 everything. So OCR never gets a plain video frame when a photo is possible:
 
 - **Chrome on Android (`ImageCapture`):** the stream finds the code, the shot fires when it
   reads twice at the same place (`isSteady`), and `takePhoto` asks for about 4096 px wide
   (`PHOTO_WIDTH`), not the camera's largest. The photo must contain the code too; if not
   (phone lowered during the shutter lag), the video frame where the code read is used.
+- **The photo sees wider than the viewfinder.** Android's still capture uses the whole
+  sensor at 4:3; the 16:9 video stream is a crop of it, more so with stabilization, and
+  `object-fit: cover` cropped the stream again on screen. Two shots of a form that filled the
+  viewfinder had the code at 16-21% of the photo's width (670 and 500 px of 3200), soft, and
+  nothing read; the 1920 px video frame had it at about 800 px. So the shot keeps the frame
+  where the code read (`shoot(fallback, videoShare)`), decodes the code in both, and uses the
+  photo only when it puts at least as many pixels on the code (`MIN_PHOTO_GAIN`), else the
+  frame; `diag.camera.codeWidth` has both. The manual button passes the frame too. The
+  viewfinder shows the whole stream (`contain`), and a code under 0.3 of the frame's width
+  asks to move closer instead of shooting (`MIN_CODE_SHARE`).
+- **A code too soft to decode** is still found by its look ([locate.ts](src/locate.ts):
+  the one wide flat band of steep edges across and none down; within 3 px of zxing's ends on
+  a sharp photo at 1000 px). The form is then cut out and read, the IBAN can come from the
+  digits under the bars, and with too few labels for a fit the template is placed by the
+  code alone (`layoutFromCode`, `CODE_BOX`): VS and KS are then flagged, SS is skipped (the
+  grid sat a row low once and read the reference number). A soft photo prints grey, so the
+  cell threshold moves up when the crop has contrast but no ink below it.
 - **Canvas memory on a phone:** Chrome on Android does not throw when canvas memory runs
   out; the canvas comes out blank. A live shot then filled only the IBAN (the barcode is read
   from a 2400 px copy, the level full-size copy came out blank, OCR read nothing, `layout:

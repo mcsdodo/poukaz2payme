@@ -248,6 +248,23 @@ function robustFit(start: Pair[]): { fit: Affine; pairs: Pair[]; residual: numbe
   return undefined;
 }
 
+/** The barcode's bars, measured on the straightened real photo. */
+export const CODE_BOX = b(836, 1167, 1754, 1256);
+
+/**
+ * The template placed by the barcode alone, when OCR read too few labels to fit
+ * it (a soft live shot: the values legible, the small labels a blur). The photo
+ * is already level, so this is a scale and a shift. The code is at the bottom,
+ * so the top of the form carries the code's error several times over: the grids
+ * move to their characters anyway (gridTiles), and every label it adds is marked.
+ */
+export function layoutFromCode(code: BBox): Layout {
+  const s = (code.x1 - code.x0) / (CODE_BOX.x1 - CODE_BOX.x0);
+  const cy = (CODE_BOX.y0 + CODE_BOX.y1) / 2;
+  const fit: Affine = { a: s, b: 0, c: code.x0 - CODE_BOX.x0 * s, d: 0, e: s, f: (code.y0 + code.y1) / 2 - cy * s };
+  return makeLayout(fit, new Set(), 0, 0);
+}
+
 export function fitLayout(lines: OcrLine[]): Layout | undefined {
   const texts = lines.map((l) => strip(l.text));
   const candidates = GROUPS.map((g) => lines.filter((_, i) => g.re.test(texts[i])).sort((p, q) => p.bbox.x0 - q.bbox.x0));
@@ -290,8 +307,10 @@ export function fitLayout(lines: OcrLine[]): Layout | undefined {
     }
   });
   const final = robustFit(pairs) ?? first;
-  const fit = final.fit;
-  const matched = new Set(final.pairs.map((p) => p.entry));
+  return makeLayout(final.fit, new Set(final.pairs.map((p) => p.entry)), final.pairs.length, Math.round(final.residual * 10) / 10);
+}
+
+function makeLayout(fit: Affine, matched: Set<Entry>, anchors: number, residual: number): Layout {
   // An entry whose OCR line the fit rejected stays unmatched, but that line is still in the
   // input. Adding a label next to it is harmless: the real line comes first in the input.
   const map = (box: BBox): BBox => {
@@ -311,5 +330,5 @@ export function fitLayout(lines: OcrLine[]): Layout | undefined {
       if (entry.text && !matched.has(entry)) added.push({ text: entry.text, bbox: map(entry.box), confidence: 0, predicted: true });
     }
   }
-  return { map, added, messageArea: map(MESSAGE_AREA), anchors: final.pairs.length, residual: Math.round(final.residual * 10) / 10 };
+  return { map, added, messageArea: map(MESSAGE_AREA), anchors, residual };
 }

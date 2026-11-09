@@ -10,6 +10,8 @@
 - ocr: VS, KS, SS and the message are read from the form's fixed boxes; the two-line message now reads letter by letter, with accents
 
 ### Fixed
+- camera: the photo sees wider than the viewfinder, so a shot of a form that filled the screen came out far away and read nothing; the sharper of the photo and the video frame is now used, the viewfinder shows the whole stream, and a far code asks to move closer
+- ocr: a barcode too soft to decode is still located, so the form is read
 - camera: a live shot no longer fills only the IBAN on a phone low on canvas memory; the photo is asked at about 4096 px, copies are freed, and a blank image is read again smaller
 - camera: the auto-shot fires on two reads within 1.5 s, not only in two frames in a row
 - camera: the photo is taken without flash, and the camera turns off right after the shot
