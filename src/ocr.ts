@@ -2,7 +2,8 @@
 // into /vendor at build time (scripts/copy-assets.mjs). Nothing leaves the device.
 
 import { createWorker, OEM, PSM, type Worker } from "tesseract.js";
-import { segmentCells, voteCells, type CellReading } from "./cells";
+import { gridTiles, segmentCells, voteCells, type CellReading, type GridTile } from "./cells";
+import { accented } from "./text";
 import type { BBox, OcrLine } from "./extract";
 
 export type Progress = (status: string, progress: number) => void;
@@ -124,6 +125,8 @@ export interface BoxedRead {
   text: string;
   confidence: number;
   threshold?: number;
+  /** The grid's voted digits with "?" where unreadable: a fallback reading must fit it. */
+  pattern?: string;
   attempts: string[];
   /** Readings with every character found but some unreadable, as null. */
   partials: (string | null)[][];
@@ -233,4 +236,178 @@ export async function ocrBoxedDigits(
   const confidence = agreeing.length ? Math.max(...agreeing.map((r) => r.confidence)) : MIN_CELL_CONFIDENCE;
   // A confident but implausible reading is still the best evidence: keep it, the caller flags it.
   return { text, confidence, threshold: agreeing[0]?.k, attempts, partials };
+}
+
+/** Height a box is scaled to before its characters are cut out, in px. */
+const GRID_CELL_HEIGHT = 130;
+
+/** The boxes' area of the color image, scaled, with the boxes in crop pixels. */
+function cropGrid(canvas: HTMLCanvasElement, cells: BBox[]): { img: ImageData; cells: BBox[] } | undefined {
+  const pitch = (cells[cells.length - 1].x1 - cells[0].x0) / cells.length;
+  const top = Math.min(...cells.map((c) => c.y0));
+  const bottom = Math.max(...cells.map((c) => c.y1));
+  const h = bottom - top;
+  // A margin around the grid: shapes cut by the crop's edge are dropped, so a letter
+  // the fit placed a little outside its boxes must still be whole in the crop.
+  const left = Math.max(0, Math.floor(cells[0].x0 - pitch * 0.6));
+  const right = Math.min(canvas.width, Math.ceil(cells[cells.length - 1].x1 + pitch * 0.6));
+  const y0 = Math.max(0, Math.floor(top - h * 0.3));
+  const y1 = Math.min(canvas.height, Math.ceil(bottom + h * 0.3));
+  if (right - left < 8 || y1 - y0 < 8) return undefined;
+  const scale = GRID_CELL_HEIGHT / h;
+  const c = document.createElement("canvas");
+  c.width = Math.round((right - left) * scale);
+  c.height = Math.round((y1 - y0) * scale);
+  const ctx = c.getContext("2d", { willReadFrequently: true })!;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(canvas, left, y0, right - left, y1 - y0, 0, 0, c.width, c.height);
+  return {
+    img: ctx.getImageData(0, 0, c.width, c.height),
+    cells: cells.map((b) => ({ x0: (b.x0 - left) * scale, y0: (b.y0 - y0) * scale, x1: (b.x1 - left) * scale, y1: (b.y1 - y0) * scale })),
+  };
+}
+
+function tileCanvas(t: GridTile): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = t.width;
+  c.height = t.height;
+  c.getContext("2d")!.putImageData(new ImageData(new Uint8ClampedArray(t.data), t.width, t.height), 0, 0);
+  return c;
+}
+
+/**
+ * A boxed number read from its own boxes (layout.ts FIELDS), one digit per box,
+ * at several thresholds voted by box (voteCells). Empty boxes are skipped: VS
+ * prints its digits right-aligned.
+ */
+export async function ocrGridDigits(
+  canvas: HTMLCanvasElement,
+  cells: BBox[],
+  plausible: (text: string) => boolean = () => true,
+  minLen = 1,
+): Promise<BoxedRead> {
+  const crop = cropGrid(canvas, cells);
+  if (!crop) return { text: "", confidence: 0, attempts: [], partials: [] };
+  const w = await getOcrWorker();
+  await w.setParameters({ tessedit_char_whitelist: "0123456789", user_defined_dpi: "300" });
+  const attempts: string[] = [];
+  const readings: (CellReading & { k: number; confidence: number })[] = [];
+  const complete = (r: CellReading) => r.cells.every((c) => c.ch !== null);
+  const textOf = (r: CellReading) => r.cells.map((c) => c.ch ?? "?").join("");
+  for (const k of CELL_THRESHOLDS) {
+    const tiles = gridTiles(crop.img, crop.cells, k);
+    const reading: CellReading & { k: number; confidence: number } = { k, confidence: 100, cells: [] };
+    for (let i = 0; i < tiles.length; i++) {
+      const t = tiles[i];
+      if (!t) continue;
+      const cell = await readCell(w, tileCanvas(t), t.aspect);
+      const good = isGoodCell(cell);
+      if (good) reading.confidence = Math.min(reading.confidence, cell.confidence);
+      // Matched by box, not by pixel: one box is one place in the vote.
+      reading.cells.push({ center: i * 100, inkHeight: 100, ch: good ? cell.ch : null });
+    }
+    attempts.push(`${k}: ${tiles.map((t, i) => (t ? (reading.cells.find((c) => c.center === i * 100)?.ch ?? "?") : "_")).join("")}`);
+    if (!reading.cells.length) continue;
+    readings.push(reading);
+    const done = readings.filter(complete);
+    if (done.length >= 2 && done.every((r) => textOf(r) === textOf(done[0])) && plausible(textOf(done[0]))) break;
+  }
+  const voted = voteCells(readings);
+  const partials = voted.includes(null) && voted.length === cells.length ? [voted] : [];
+  const text = voted.includes(null) ? "" : voted.join("");
+  const pattern = voted.map((c) => c ?? "?").join("") || undefined;
+  if (readings.length > 1) attempts.push(`vote: ${pattern ?? ""}`);
+  if (!text || text.length < minLen) return { text: "", confidence: 0, pattern, attempts, partials };
+  const agreeing = readings.filter((r) => complete(r) && textOf(r) === text);
+  const confidence = agreeing.length ? Math.max(...agreeing.map((r) => r.confidence)) : MIN_CELL_CONFIDENCE;
+  return { text, confidence, threshold: agreeing[0]?.k, pattern, attempts, partials };
+}
+
+const LETTERS = "AÁÄBCČDĎEÉFGHIÍJKLĹĽMNŇOÓÔPQRŔSŠTŤUÚVWXYÝZŽaáäbcčdďeéfghiíjklĺľmnňoóôpqrŕsštťuúvwxyýzž0123456789";
+/** Letters whose small form is a smaller copy of the capital: alone, only the height tells them apart. */
+const SAME_SHAPE = new Set([..."cčoóôsšvwxzž"]);
+const MIN_CHAR_CONFIDENCE = 50;
+
+async function readLetter(w: Worker, tile: HTMLCanvasElement): Promise<{ ch: string; confidence: number }> {
+  let best = { ch: "", confidence: 0 };
+  for (const mode of [PSM.SINGLE_CHAR, PSM.SINGLE_WORD, PSM.SINGLE_BLOCK]) {
+    await w.setParameters({ tessedit_pageseg_mode: mode });
+    const { data } = await w.recognize(tile);
+    const ch = data.text.trim();
+    if (ch.length === 1 && data.confidence > best.confidence) best = { ch, confidence: data.confidence };
+    if (best.confidence >= 75) break;
+  }
+  return best;
+}
+
+export interface GridText {
+  text: string;
+  /** The weakest character. */
+  confidence: number;
+  /** Per box: the character, "_" for an empty box, "?" when unreadable. */
+  boxes: string;
+  /** Per box: the letter's width x height and its marks, for the diagnostics. */
+  shapes: string;
+}
+
+/**
+ * Text printed one character per box, as the message is: each box read alone,
+ * an empty box a space. Punctuation is told by its shape: a short flat mark is
+ * a hyphen, a short mark at the foot of the letters a comma or a full stop.
+ */
+export async function ocrGridText(canvas: HTMLCanvasElement, cells: BBox[]): Promise<GridText> {
+  const crop = cropGrid(canvas, cells);
+  if (!crop) return { text: "", confidence: 0, boxes: "", shapes: "" };
+  const tiles = gridTiles(crop.img, crop.cells, 0.5);
+  const heights = tiles.filter((t): t is GridTile => !!t).map((t) => t.mainHeight).sort((a, b) => a - b);
+  // Capitals are the tallest shapes of the row (accents are separate shapes, so they do not count).
+  const cap = heights.length ? heights[Math.floor((heights.length - 1) * 0.9)] : 0;
+  const tall = tiles.filter((t): t is GridTile => !!t && t.mainHeight >= cap * 0.6);
+  const foot = tall.length ? tall.map((t) => t.middle + t.mainHeight / 2).sort((a, b) => a - b)[tall.length >> 1] : 0;
+  const w = await getOcrWorker();
+  await w.setParameters({ tessedit_char_whitelist: LETTERS, user_defined_dpi: "300" });
+  const chars: { ch: string; confidence: number; lower?: boolean }[] = [];
+  for (const t of tiles) {
+    if (!t) {
+      chars.push({ ch: " ", confidence: 100 });
+      continue;
+    }
+    const inkW = t.aspect * t.inkHeight;
+    if (t.mainHeight < cap * 0.45) {
+      // By shape: in this font the hyphen sits low, so the height above the foot misled.
+      chars.push({ ch: inkW >= t.inkHeight * 1.5 ? "-" : t.inkHeight >= inkW * 1.3 ? "," : ".", confidence: 90 });
+      continue;
+    }
+    // A bare vertical bar: Tesseract returns nothing for it alone. l or I, the neighbours decide.
+    if (t.parts === 1 && t.mainWidth <= t.mainHeight * 0.25) {
+      chars.push({ ch: "I", confidence: 80 });
+      continue;
+    }
+    const r = await readLetter(w, tileCanvas(t));
+    if (!r.ch || r.confidence < MIN_CHAR_CONFIDENCE) {
+      chars.push({ ch: "?", confidence: r.confidence });
+      continue;
+    }
+    const lower = t.mainHeight < cap * 0.8;
+    let ch = SAME_SHAPE.has(r.ch.toLowerCase()) ? (lower ? r.ch.toLowerCase() : r.ch.toUpperCase()) : r.ch;
+    // Tesseract reads a lone é as e and Ý as Y. The cut-out knows there is a mark above
+    // the letter: a vowel takes an acute, a consonant a caron. Accents are only added.
+    if (t.marks && ch.normalize("NFD").length === 1) ch = accented(ch, t.marks);
+    chars.push({ ch, confidence: r.confidence, lower });
+  }
+  // l and I are one shape in this font: the letters next to it decide (Malé, RICH).
+  const isLetter = (c: string) => /\p{L}/u.test(c) && !"lI".includes(c);
+  for (let i = 0; i < chars.length; i++) {
+    if (chars[i].ch !== "l" && chars[i].ch !== "I") continue;
+    const near = [chars[i - 1], chars[i + 1]].filter((c) => c && isLetter(c.ch)).map((c) => c!.ch);
+    if (near.length) chars[i].ch = near.some((c) => c === c.toLowerCase()) ? "l" : "I";
+  }
+  const boxes = chars.map((c) => (c.ch === " " ? "_" : c.ch)).join("");
+  const shapes = tiles.map((t) => (t ? `${t.mainWidth}x${t.mainHeight}${t.marks ? "+" + t.marks : ""}` : "_")).join(" ");
+  return {
+    text: chars.map((c) => c.ch).join(""),
+    confidence: Math.min(100, ...chars.map((c) => c.confidence)),
+    boxes,
+    shapes: `cap ${cap}: ${shapes}`,
+  };
 }

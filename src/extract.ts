@@ -5,7 +5,7 @@
 
 import { parseEuroWords } from "./amountwords";
 import { isValidIban, normalizeIban } from "./iban";
-import { fitLayout } from "./layout";
+import { fitLayout, type Layout } from "./layout";
 import { parseAmount } from "./payme";
 import { strip } from "./text";
 
@@ -35,6 +35,8 @@ export interface Extracted {
   filled?: boolean;
   /** Found next to a label that the form template placed, not one OCR read. */
   predicted?: boolean;
+  /** Another copy on the form read differently: shown in the field's note. */
+  other?: string;
 }
 
 export interface ExtractResult {
@@ -57,6 +59,10 @@ export interface ExtractResult {
   barcodeDigits: string[];
   /** The form template fit, when enough labels were read. */
   layout?: { anchors: number; residual: number; added: string[] };
+  /** The fit itself, to read the fixed field boxes (layout.ts FIELDS). */
+  fit?: Layout;
+  /** What the boxes showed where they could not be read whole ("112?13"): a fallback must fit it. */
+  patterns?: Partial<Record<"vs" | "ss" | "ks", string>>;
 }
 
 /** Fix common OCR confusions inside a run that should be digits. */
@@ -333,7 +339,10 @@ export function extractFields(ocrLines: OcrLine[]): ExtractResult {
   const layout = fitLayout(ocrLines);
   // Added labels go last, so a label OCR read comes first wherever the order matters.
   const lines = layout ? [...ocrLines, ...layout.added] : ocrLines;
-  if (layout) res.layout = { anchors: layout.anchors, residual: layout.residual, added: layout.added.map((l) => l.text) };
+  if (layout) {
+    res.layout = { anchors: layout.anchors, residual: layout.residual, added: layout.added.map((l) => l.text) };
+    res.fit = layout;
+  }
   const all = lines.map((l) => l.text).join("\n");
 
   const iban = findIban(all);

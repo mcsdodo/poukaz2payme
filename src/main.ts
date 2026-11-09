@@ -11,7 +11,8 @@ import { decodeCanvas, isSteady, lastZxingError, nativeFormats, orientationFromC
 import { extractFields, type BBox, type Extracted, type ExtractResult } from "./extract";
 import { bankName, formatIban, isValidIban, normalizeIban, splitSkIban, isValidLegacyPart } from "./iban";
 import { flattenLight } from "./light";
-import { getOcrWorker, ocrBoxedDigits, ocrDigits, ocrLine, ocrPage, setOcrProgress } from "./ocr";
+import { getOcrWorker, ocrBoxedDigits, ocrDigits, ocrGridDigits, ocrGridText, ocrLine, ocrPage, setOcrProgress } from "./ocr";
+import { FIELDS, gridCells } from "./layout";
 import { consensus, type Reading } from "./vote";
 import { buildBySquare, buildPaymeLink, formatAmount, parseAmount, PaymeError } from "./payme";
 import { completeKs, isKnownKsClass } from "./ks";
@@ -254,6 +255,8 @@ let torchOn = false;
  */
 const canTakePhoto = "ImageCapture" in window;
 const isPhone = matchMedia("(pointer: coarse)").matches;
+/** Two reads of the code at one place within this time are a phone held still. */
+const STEADY_WINDOW_MS = 1500;
 /** After this long without a code, offer the phone's own camera app. */
 const NATIVE_HINT_MS = 8000;
 
@@ -429,7 +432,9 @@ async function decodePoukaz(canvas: HTMLCanvasElement): Promise<BarcodeHit[]> {
 async function scanLoop(): Promise<void> {
   scanning = true;
   let frames = 0;
-  let prev: BarcodeHit | undefined;
+  // The last read and when: a frame that misses the code in between does not start the wait over.
+  let prev: { hit: BarcodeHit; at: number } | undefined;
+  let reads = 0;
   const started = performance.now();
   $("btn-native").hidden = true;
   while (scanning) {
@@ -439,12 +444,16 @@ async function scanLoop(): Promise<void> {
       const hits = await decodePoukaz(frame).catch(() => [] as BarcodeHit[]);
       if (!scanning) return;
       const good = hits.find(isPoukazHit);
-      if (good && prev && isSteady(prev.position, good.position, frame.width)) {
+      const now = performance.now();
+      if (good && prev && now - prev.at <= STEADY_WINDOW_MS && isSteady(prev.hit.position, good.position, frame.width)) {
         // The frame at full stream size is the fallback if the photo misses the code.
         await shoot(videoFrame(3200) ?? undefined);
         return;
       }
-      prev = good;
+      if (good) {
+        prev = { hit: good, at: now };
+        reads++;
+      }
       const other = hits.find((h) => h.format !== "Code128");
       $("cam-status").textContent = good
         ? "Kód prečítaný, držte telefón v pokoji..."
@@ -452,7 +461,7 @@ async function scanLoop(): Promise<void> {
           ? `Vidím ${other.format}, hľadám čiarový kód poukazu...`
           : hits.length
             ? "Kód nevyzerá ako poukaz, skúste priblížiť."
-            : `Hľadám čiarový kód... (${frames}, ${frame.width}x${frame.height}${nativeFormats.length ? "" : ", zxing"})`;
+            : `Hľadám čiarový kód... (${frames}, ${frame.width}x${frame.height}${nativeFormats.length ? "" : ", zxing"}${reads ? `, prečítaný ${reads}x` : ""})`;
       // A browser cannot open the camera app by itself: it needs a tap, so this offers a button.
       if (!good && performance.now() - started > NATIVE_HINT_MS && $("btn-native").hidden) {
         $("btn-native").hidden = false;
@@ -623,6 +632,7 @@ async function processImage(input: HTMLCanvasElement, extraRotation: number, cap
     // 4. Digit-only second pass for empty symbol and amount fields.
     step("digits");
     setWork("Dočítavam číselné polia...");
+    await readFixedFields(flat, ex, diag);
     await secondPass(ocrCanvas, flat, ex, diag);
     await voteName(ocrCanvas, ex, diag);
 
@@ -733,6 +743,72 @@ async function voteName(ocrCanvas: HTMLCanvasElement, ex: ExtractResult, diag: R
 /** The digit pass under the SUMA label, when there are no amount words to check it against. */
 const MIN_AMOUNT_CONFIDENCE = 60;
 
+function fitsPattern(text: string, pattern: string): boolean {
+  return text.length === pattern.length && [...pattern].every((p, i) => p === "?" || p === text[i]);
+}
+
+function union(boxes: BBox[]): BBox {
+  return {
+    x0: Math.min(...boxes.map((b) => b.x0)),
+    y0: Math.min(...boxes.map((b) => b.y0)),
+    x1: Math.max(...boxes.map((b) => b.x1)),
+    y1: Math.max(...boxes.map((b) => b.y1)),
+  };
+}
+
+/**
+ * Reads the fields from where the form prints them (layout.ts FIELDS), mapped
+ * by the template fit, instead of searching next to their labels. Runs only with
+ * a fit; what it cannot read, the label search and secondPass still try.
+ */
+async function readFixedFields(colorCanvas: HTMLCanvasElement, ex: ExtractResult, diag: Record<string, unknown>): Promise<void> {
+  const fit = ex.fit;
+  if (!fit) return;
+  const tries: Record<string, unknown> = {};
+
+  // VS from its boxes. The stub's copy, when OCR read it, is the second opinion.
+  const vsCells = gridCells(fit, FIELDS.vs);
+  const vs = await ocrGridDigits(colorCanvas, vsCells, undefined, 2);
+  tries.vs = vs.attempts;
+  ex.patterns = {};
+  if (!vs.text && vs.pattern) ex.patterns.vs = vs.pattern;
+  if (vs.text) {
+    const stub = ex.vs?.value;
+    ex.vs = { value: vs.text, confidence: stub && stub !== vs.text ? Math.min(vs.confidence, 60) : vs.confidence, bbox: union(vsCells), other: stub && stub !== vs.text ? stub : undefined };
+  }
+
+  const ksCells = gridCells(fit, FIELDS.ks);
+  const ks = await ocrGridDigits(colorCanvas, ksCells, isKnownKsClass, 4);
+  tries.ks = ks.attempts;
+  if (!ks.text && ks.pattern) ex.patterns.ks = ks.pattern;
+  if (ks.text) ex.ks = { value: ks.text, confidence: ks.confidence, bbox: union(ksCells) };
+  else {
+    const value = ks.partials.map(completeKs).find(Boolean);
+    if (value) ex.ks = { value, confidence: 40, bbox: union(ksCells), filled: true };
+  }
+
+  if (!ex.ss?.value) {
+    const ssCells = gridCells(fit, FIELDS.ss);
+    const ss = await ocrGridDigits(colorCanvas, ssCells, undefined, 2);
+    tries.ss = ss.attempts;
+    if (!ss.text && ss.pattern) ex.patterns.ss = ss.pattern;
+    if (ss.text) ex.ss = { value: ss.text, confidence: ss.confidence, bbox: union(ssCells) };
+  }
+
+  // The message, two rows of boxes. A word runs on from the end of the first row
+  // ("RICH" + "ARD"), so the rows join without a space; an empty box is one.
+  const rows = [];
+  for (const g of FIELDS.message) rows.push(await ocrGridText(colorCanvas, gridCells(fit, g)));
+  tries.message = rows.map((r) => `${r.boxes} (${r.shapes})`);
+  const message = rows.map((r) => r.text).join("").replace(/\s+/g, " ").trim();
+  if ((message.match(/\p{L}/gu) ?? []).length >= 2) {
+    const area = union(FIELDS.message.flatMap((g) => gridCells(fit, g)));
+    ex.message = { value: message, confidence: Math.min(...rows.map((r) => r.confidence)), bbox: area };
+  }
+
+  diag.fixedFields = tries;
+}
+
 async function secondPass(
   ocrCanvas: HTMLCanvasElement,
   colorCanvas: HTMLCanvasElement,
@@ -778,6 +854,13 @@ async function secondPass(
     // A single isolated shape is a reading that lost the rest (seen: VS "1" for 112606).
     const r = await ocrBoxedDigits(colorCanvas, rect, max, key === "ks" ? isKnownKsClass : undefined, key === "ks" ? 4 : 2);
     tries[key] = { ...r, rect: roundBox(rect) };
+    // The boxes showed part of it ("112?13"): a reading of another length or with other
+    // digits is of something else (seen: 1126130, KS's first 0 taken as a VS digit).
+    const pattern = ex.patterns?.[key];
+    if (r.text && pattern && !fitsPattern(r.text, pattern)) {
+      tries[key] = { ...r, rect: roundBox(rect), rejected: `does not fit ${pattern}` };
+      continue;
+    }
     if (r.text) {
       ex[key] = { value: r.text, confidence: r.confidence, bbox: rect, labelBox: b, predicted: f.predicted };
     } else if (key === "ks") {
@@ -901,7 +984,8 @@ function merge(barcode: PoukazBarcode | null, ex: ExtractResult, ocrCanvas: HTML
         q[key].level = "high";
       }
     } else if (o?.value) {
-      setField(key, o.value, "ocr", ocrLevel(o.confidence), crop(o.bbox), o.predicted ? PREDICTED_NOTE : undefined);
+      const note = o.other ? `Ľavá časť poukazu má ${o.other}, overte.` : o.predicted ? PREDICTED_NOTE : undefined;
+      setField(key, o.value, "ocr", o.other ? "low" : ocrLevel(o.confidence), crop(o.bbox), note);
     } else if (o?.labelBox) {
       q[key].crop = crop({ x0: o.labelBox.x0, y0: o.labelBox.y0, x1: o.labelBox.x1 + (o.labelBox.x1 - o.labelBox.x0) * 0.6, y1: o.labelBox.y1 + (o.labelBox.y1 - o.labelBox.y0) * 3 });
     }

@@ -92,6 +92,40 @@ const GROUPS: Group[] = [
  */
 const MESSAGE_AREA = b(640, 962, 1200, 1105);
 
+/** A row of printed boxes, one character each: the first box's left edge, the pitch, the count. */
+export interface Grid {
+  x: number;
+  pitch: number;
+  n: number;
+  y0: number;
+  y1: number;
+}
+
+/**
+ * Where the values are printed, in template pixels. Measured on two real photos
+ * straightened by this fit (the box separators and the printed characters); the
+ * two agreed within 6 px. Boxes are read from here instead of searched for next
+ * to a label, so a field cannot pick up its neighbour's text.
+ */
+export const FIELDS = {
+  /** VARIABILNÝ SYMBOL boxes, right column: 10 boxes, digits right-aligned. */
+  vs: { x: 1357, pitch: 45.6, n: 10, y0: 652, y1: 704 } as Grid,
+  /** KONŠT. SYMBOL: 4 boxes, right after the VS boxes. */
+  ks: { x: 1809, pitch: 46.3, n: 4, y0: 652, y1: 704 } as Grid,
+  /** ŠPECIFICKÝ SYMBOL, middle column: 10 boxes. */
+  ss: { x: 641, pitch: 47.8, n: 10, y0: 855, y1: 908 } as Grid,
+  /** SPRÁVA PRE ADRESÁTA: two rows of 12 boxes. A word runs on from the first row to the second. */
+  message: [
+    { x: 662, pitch: 47.6, n: 12, y0: 1008, y1: 1066 },
+    { x: 662, pitch: 47.6, n: 12, y0: 1078, y1: 1138 },
+  ] as Grid[],
+};
+
+/** The boxes of a grid, each mapped into the photo. */
+export function gridCells(layout: Layout, g: Grid): BBox[] {
+  return Array.from({ length: g.n }, (_, i) => layout.map(b(g.x + i * g.pitch, g.y0, g.x + (i + 1) * g.pitch, g.y1)));
+}
+
 /** A matched label must sit this close to its predicted place, in template pixels (a label is about 18 tall). */
 const TOLERANCE = 20;
 const MIN_ANCHORS = 4;

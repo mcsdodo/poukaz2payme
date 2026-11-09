@@ -74,6 +74,9 @@ everything. So OCR never gets a plain video frame when a photo is possible:
   camera offers it (a flash glares on the paper, and on one phone the light stayed on after
   the shot), and the shot stops the stream instead of pausing it: a paused track keeps the
   camera and its light on while OCR runs. "Späť" stops it too.
+- The auto-shot needs two reads at one place within 1.5 s (`STEADY_WINDOW_MS`), not in two
+  frames in a row: a frame that missed the code started the wait over. The status line
+  counts the reads (`prečítaný 3x`).
 - **Fallbacks:** after 8 s without a code, the camera view offers the camera app; a live
   shot that misses VS or amount offers it on the result screen. A browser opens the camera
   app only from a tap, so both are buttons. The stream is stopped first: an iPhone cannot
@@ -110,6 +113,39 @@ everything. So OCR never gets a plain video frame when a photo is possible:
   usual. A label OCR read always wins. Values found next to an added label get a note. The
   template also gives the message boxes: the message is printed over its label, so it is
   read from the area, at OCR confidence >= 40, and flagged low.
+- **Fixed field boxes (`FIELDS` in [layout.ts](src/layout.ts)):** VS, KS, SS and the two
+  message rows are read from where the form prints them, mapped by the template fit, not
+  searched for next to their labels (`readFixedFields` in [main.ts](src/main.ts)). Each is a
+  grid: first box, pitch, count. They were measured on two real photos straightened by the
+  fit (box separators and character centers; the photos agreed within 6 px). To measure
+  again: map the template's corners with `fitLayout(...).map`, warp the flattened image
+  with the inverse affine, and find the box separators as columns of higher greenness. The
+  fit is off by up to a quarter box, so `gridTiles` ([cells.ts](src/cells.ts)) first moves
+  the grid to where the printed characters are (median offset of the letters from the box
+  middles), then gives every shape to the box its middle falls in, which keeps an accent
+  with its letter and leaves the next field's digits (KS's 0) out. What made the message read:
+  - Rules: a letter standing on a rule or crossed by the column's border merged with it and
+    was dropped as a line (A, R, H). Colour does not separate them after `flattenLight`
+    (the rule was as grey as the print on one photo), shape does: ink runs longer than 1.2
+    boxes across or 0.9 down, columns or rows mostly ink, and thin bars much taller than
+    the row's letters are erased, and everything outside the row's band is cut off.
+  - Small marks count only where print puts them: an accent above a letter (7x8 px), a
+    hyphen as a flat dash, a comma or full stop at the letters' foot, and punctuation only
+    next to a letter. A letter is at least 0.6 of the row's usual height.
+  - Each letter is read alone (`ocrGridText` in [ocr.ts](src/ocr.ts)). Alone, Tesseract
+    cannot tell `c o s v w x z` from their capitals, so the height decides; it returns
+    nothing for a bare bar, so a one-shape bar is `l` or `I` by its neighbours (`Malé`,
+    `RICH`); it reads `é` as `e`, so a mark above the letter adds an acute to a vowel and a
+    caron to a consonant (`accented` in [text.ts](src/text.ts)). The rows join without a
+    space (`RICH` + `ARD`); an empty box is a space.
+  - Digits use the same grid at three thresholds, voted per box (`ocrGridDigits`). Where
+    the grid read part of a field (`112?13`), the label-based fallback must fit that
+    pattern: on a 970 px frame it read `1126130`.
+  - The name stays label-based with the vote: fixed name boxes picked up the address's
+    second line when the fit was off.
+  - On both photos at all sizes the message reads `MŠ-Malé,RICHARD LAČNÝ`, except at
+    1300 px (two accents lost, the marks are a few pixels). At 970 px (a portrait video
+    frame) it is garbled, and VS is left empty rather than wrong.
 - **Solid:** IBAN from the Code 128C barcode, accepted when it passes mod-97. The payme link
   matches the example in the SBA standard (unit test). PAY by square round-trips through
   `bysquare` decode (unit test).
@@ -192,10 +228,10 @@ everything. So OCR never gets a plain video frame when a photo is possible:
 - **Tesseract traps:** a character tile needs a wide white margin (at 14 px a clean `9`
   returned nothing), and each page mode returns nothing for some clean characters, so
   `ocrBoxedDigits` tries three modes per character.
-- **Not solved:** the message read from its area is often empty and sometimes wrong (`ŠTRKY`
-  for `STRAVNÉ` on one turned copy of the real photo). The boxed euro digits also read as nothing, so the words stand in. There
-  is no perspective correction: the affine template fit absorbs a mild keystone, about 10 px
-  on the real photo.
+- **Not solved:** the boxed euro digits read as nothing, so the words stand in. There is no
+  perspective correction: the affine template fit absorbs a mild keystone, about 10 px on
+  the real photo, and the grid's offset step absorbs the rest along a row. The page OCR's
+  message (from `messageArea`) stays only when the boxes give fewer than 2 letters.
 
 The result screen has a "Diagnostika" panel (raw barcode digits and corners, variant,
 checksums, tilt, template fit, OCR lines, timings). The OCR lines are after deskew; the

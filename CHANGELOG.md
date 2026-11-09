@@ -5,7 +5,11 @@
 ### Added
 - camera: on Android the live view goes fullscreen and turns to landscape, where the form is larger in the frame
 
+### Added
+- ocr: VS, KS, SS and the message are read from the form's fixed boxes; the two-line message now reads letter by letter, with accents
+
 ### Fixed
+- camera: the auto-shot fires on two reads within 1.5 s, not only in two frames in a row
 - camera: the photo is taken without flash, and the camera turns off right after the shot
 - ocr: boxed digits are voted across thresholds, so one misread threshold no longer gives a wrong VS or KS
 - ocr: the name survives a stub cut by the photo's edge or a line OCR split in two
