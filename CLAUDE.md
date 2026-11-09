@@ -55,9 +55,16 @@ at 90% of its width). On the real form that lost VS and KS; the same form at 193
 everything. So OCR never gets a plain video frame when a photo is possible:
 
 - **Chrome on Android (`ImageCapture`):** the stream finds the code, the shot fires when it
-  reads twice in a row at the same place (`isSteady`), and `takePhoto` asks for the largest
-  size from `getPhotoCapabilities`. The photo must contain the code too; if not (phone
-  lowered during the shutter lag), the video frame where the code read is used.
+  reads twice at the same place (`isSteady`), and `takePhoto` asks for about 4096 px wide
+  (`PHOTO_WIDTH`), not the camera's largest. The photo must contain the code too; if not
+  (phone lowered during the shutter lag), the video frame where the code read is used.
+- **Canvas memory on a phone:** Chrome on Android does not throw when canvas memory runs
+  out; the canvas comes out blank. A live shot then filled only the IBAN (the barcode is read
+  from a 2400 px copy, the level full-size copy came out blank, OCR read nothing, `layout:
+  no fit`). The pipeline frees each copy when the next is made (`release`, `swap`), asks for
+  a 4096 px photo (a 50 MP one decodes to 200 MB first), and checks the OCR image with
+  `isBlank`: a blank one is read again once at 60% of the size, and `diag.capture` says so.
+  Reproduce it in Chromium by making `drawImage` a no-op on canvases over 8 MP.
 - **Landscape:** on a phone the camera tap goes fullscreen and locks landscape
   (`enterLandscape` in [main.ts](src/main.ts)): the form fills about 1700 px of a 1920 px
   stream instead of 1000. Chrome locks only in fullscreen, and fullscreen needs the tap, so
