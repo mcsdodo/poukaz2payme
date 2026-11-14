@@ -138,6 +138,8 @@ export interface BoxedRead {
   attempts: string[];
   /** Readings with every character found but some unreadable, as null. */
   partials: (string | null)[][];
+  /** How far the grid was moved onto the printed characters, in the input's pixels (ocrGridDigits only). */
+  shift?: number;
 }
 
 function isGoodCell(c: { ch: string; confidence: number }): boolean {
@@ -250,7 +252,7 @@ export async function ocrBoxedDigits(
 const GRID_CELL_HEIGHT = 130;
 
 /** The boxes' area of the color image, scaled, with the boxes in crop pixels. */
-function cropGrid(canvas: HTMLCanvasElement, cells: BBox[]): { img: ImageData; cells: BBox[] } | undefined {
+function cropGrid(canvas: HTMLCanvasElement, cells: BBox[]): { img: ImageData; cells: BBox[]; scale: number } | undefined {
   const pitch = (cells[cells.length - 1].x1 - cells[0].x0) / cells.length;
   const top = Math.min(...cells.map((c) => c.y0));
   const bottom = Math.max(...cells.map((c) => c.y1));
@@ -271,6 +273,7 @@ function cropGrid(canvas: HTMLCanvasElement, cells: BBox[]): { img: ImageData; c
   ctx.imageSmoothingQuality = "high";
   ctx.drawImage(canvas, left, y0, right - left, y1 - y0, 0, 0, c.width, c.height);
   return {
+    scale,
     img: ctx.getImageData(0, 0, c.width, c.height),
     cells: cells.map((b) => ({ x0: (b.x0 - left) * scale, y0: (b.y0 - y0) * scale, x1: (b.x1 - left) * scale, y1: (b.y1 - y0) * scale })),
   };
@@ -335,10 +338,11 @@ export async function ocrGridDigits(
   const text = voted.includes(null) ? "" : voted.join("");
   const pattern = voted.map((c) => c ?? "?").join("") || undefined;
   if (readings.length > 1) attempts.push(`vote: ${pattern ?? ""}`);
-  if (!text || text.length < minLen) return { text: "", confidence: 0, pattern, boxes, attempts, partials };
+  const shift = (gridOffset ?? 0) / crop.scale;
+  if (!text || text.length < minLen) return { text: "", confidence: 0, pattern, boxes, attempts, partials, shift };
   const agreeing = readings.filter((r) => complete(r) && textOf(r) === text);
   const confidence = agreeing.length ? Math.max(...agreeing.map((r) => r.confidence)) : MIN_CELL_CONFIDENCE;
-  return { text, confidence, threshold: agreeing[0]?.k, pattern, boxes, attempts, partials };
+  return { text, confidence, threshold: agreeing[0]?.k, pattern, boxes, attempts, partials, shift };
 }
 
 const LETTERS = "AÁÄBCČDĎEÉFGHIÍJKLĹĽMNŇOÓÔPQRŔSŠTŤUÚVWXYÝZŽaáäbcčdďeéfghiíjklĺľmnňoóôpqrŕsštťuúvwxyýzž0123456789";

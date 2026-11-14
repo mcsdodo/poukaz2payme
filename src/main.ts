@@ -618,6 +618,11 @@ function union(boxes: BBox[]): BBox {
  * by the template fit, instead of searching next to their labels. Runs only with
  * a fit; what it cannot read, the label search and secondPass still try.
  */
+/** Boxes moved along their row by `dx` pixels. */
+function shifted(cells: BBox[], dx = 0): BBox[] {
+  return dx ? cells.map((c) => ({ ...c, x0: c.x0 + dx, x1: c.x1 + dx })) : cells;
+}
+
 async function readFixedFields(colorCanvas: HTMLCanvasElement, ex: ExtractResult, diag: Record<string, unknown>): Promise<void> {
   const fit = ex.fit;
   if (!fit) return;
@@ -630,9 +635,13 @@ async function readFixedFields(colorCanvas: HTMLCanvasElement, ex: ExtractResult
   // VS and KS print as one row of 14 boxes: read as one, a grid placed a box out shows as a
   // digit outside it (gridTiles), which VS alone, with KS's digits next to it, would not.
   // The KS fills its 4 boxes; VS prints right-aligned in its 10.
-  const vsCells = gridCells(fit, FIELDS.vs);
-  const ksCells = gridCells(fit, FIELDS.ks);
-  const row = rough ? { attempts: ["skipped: placed by the barcode alone"], confidence: 0, boxes: [] as (string | null | undefined)[] } : await ocrGridDigits(colorCanvas, [...vsCells, ...ksCells]);
+  const vsGrid = gridCells(fit, FIELDS.vs);
+  const ksGrid = gridCells(fit, FIELDS.ks);
+  const row = rough ? { attempts: ["skipped: placed by the barcode alone"], confidence: 0, boxes: [] as (string | null | undefined)[], shift: 0 } : await ocrGridDigits(colorCanvas, [...vsGrid, ...ksGrid]);
+  // The reader moved the grid onto the printed digits (up to a box); the sample shown
+  // under each field is cut where it read, not where the template fit put the boxes.
+  const vsCells = shifted(vsGrid, row.shift);
+  const ksCells = shifted(ksGrid, row.shift);
   tries.vsks = row.attempts;
   ex.patterns = {};
   // With one box of the 14 unreadable the row reports 0; each digit read passed 70 alone.
@@ -670,6 +679,7 @@ async function readFixedFields(colorCanvas: HTMLCanvasElement, ex: ExtractResult
     const centBoxes = boxes.slice(6, 8);
     const euros = euroBoxes.includes(null) ? "" : euroBoxes.join("");
     const cents = centBoxes.every((b) => typeof b === "string") ? centBoxes.join("") : "";
+    const amountBoxes = shifted(amountCells, amt.shift);
     if (euros && cents.length === 2) {
       const boxed = `${Number(euros)},${cents}`;
       const stub = ex.amount?.value ? parseAmount(ex.amount.value) : undefined;
@@ -678,7 +688,7 @@ async function readFixedFields(colorCanvas: HTMLCanvasElement, ex: ExtractResult
       const boxedCents = parseAmount(boxed);
       if (!(words !== undefined && !fits(boxedCents) && fits(stub))) {
         const other = stub !== undefined && stub !== boxedCents ? ex.amount!.value : undefined;
-        ex.amount = { value: boxed, confidence: other ? 60 : amt.confidence || 80, bbox: union(amountCells), other };
+        ex.amount = { value: boxed, confidence: other ? 60 : amt.confidence || 80, bbox: union(amountBoxes), other };
       }
     }
   }
@@ -692,7 +702,7 @@ async function readFixedFields(colorCanvas: HTMLCanvasElement, ex: ExtractResult
     const ss = await ocrGridDigits(colorCanvas, ssCells, undefined, 2);
     tries.ss = ss.attempts;
     if (!ss.text && ss.pattern) ex.patterns.ss = ss.pattern;
-    if (ss.text) ex.ss = { value: ss.text, confidence: ss.confidence, bbox: union(ssCells) };
+    if (ss.text) ex.ss = { value: ss.text, confidence: ss.confidence, bbox: union(shifted(ssCells, ss.shift)) };
   }
 
   // The message, two rows of boxes. A word runs on from the end of the first row
