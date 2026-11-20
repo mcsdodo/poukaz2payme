@@ -6,7 +6,7 @@ import "@fontsource/ibm-plex-mono/500.css";
 import "./style.css";
 import QRCode from "qrcode";
 import { decode as decodeBySquare } from "bysquare/pay";
-import { rotatePoint, rotatedSize, zoneSkew, type Point } from "./deskew";
+import { formShareInFrame, rotatePoint, rotatedSize, zoneSkew, type Point } from "./deskew";
 import { decodeCanvas, lastZxingError, nativeFormats, orientationFromCorners, warmUpBarcode, type BarcodeHit } from "./barcode";
 import { extractFields, type BBox, type Extracted, type ExtractResult } from "./extract";
 import { bankName, formatIban, isValidIban, normalizeIban, splitSkIban, isValidLegacyPart } from "./iban";
@@ -390,7 +390,17 @@ async function processImage(input: HTMLCanvasElement, extraRotation: number, cap
     // 2. Rotate so the poukaz barcode is horizontal: it anchors the text direction.
     // First the quarter turn from the barcode corners, then the small tilt
     // measured on the reading zone, so the form rows run level for OCR and the cell crops.
-    const pk = hits.find((h) => h.format === "Code128" && parsePoukazBarcode(h.text));
+    // With two forms in the photo, the one whose fields are in the frame; on a tie the
+    // larger code, the form the photo was taken of.
+    const inFrame = (h: BarcodeHit) => formShareInFrame(h.position, canvas.width, canvas.height, orientationFromCorners(h.position));
+    const codeWidth = (h: BarcodeHit) => Math.hypot(h.position[1].x - h.position[0].x, h.position[1].y - h.position[0].y);
+    const pks = hits.filter((h) => h.format === "Code128" && parsePoukazBarcode(h.text));
+    const pk = pks.reduce<BarcodeHit | undefined>((best, h) => {
+      if (!best) return h;
+      const d = inFrame(h) - inFrame(best);
+      return d > 0.05 || (d >= -0.05 && codeWidth(h) > codeWidth(best)) ? h : best;
+    }, undefined);
+    if (pks.length > 1) diag.formInFrame = pks.map((h) => Math.round(inFrame(h) * 100) / 100);
     // A code too soft to decode is still found by its look: the form can then be cut out and
     // read, and the IBAN comes from the digits under the bars (barcodeFromOcrText).
     const located = pk ? undefined : findCode(canvas);
@@ -604,6 +614,15 @@ function fitsPattern(text: string, pattern: string): boolean {
   return text.length === pattern.length && [...pattern].every((p, i) => p === "?" || p === text[i]);
 }
 
+/** The boxes from the last filled one back to the first empty one before it. */
+function trailingRun<T>(boxes: (T | undefined)[]): T[] {
+  let end = boxes.length;
+  while (end > 0 && boxes[end - 1] === undefined) end--;
+  let start = end;
+  while (start > 0 && boxes[start - 1] !== undefined) start--;
+  return boxes.slice(start, end) as T[];
+}
+
 function union(boxes: BBox[]): BBox {
   return {
     x0: Math.min(...boxes.map((b) => b.x0)),
@@ -622,6 +641,9 @@ function union(boxes: BBox[]): BBox {
 function shifted(cells: BBox[], dx = 0): BBox[] {
   return dx ? cells.map((c) => ({ ...c, x0: c.x0 + dx, x1: c.x1 + dx })) : cells;
 }
+
+/** Boxes the message's last row is read past its end: see readFixedFields. */
+const MESSAGE_RUN_ON = 6;
 
 async function readFixedFields(colorCanvas: HTMLCanvasElement, ex: ExtractResult, diag: Record<string, unknown>): Promise<void> {
   const fit = ex.fit;
@@ -675,7 +697,10 @@ async function readFixedFields(colorCanvas: HTMLCanvasElement, ex: ExtractResult
     const amt = await ocrGridDigits(colorCanvas, amountCells);
     tries.amount = amt.attempts;
     const boxes = amt.boxes ?? [];
-    const euroBoxes = boxes.slice(0, 6).filter((b) => b !== undefined);
+    // The euros print right-aligned after the "=": the digits are the run that ends at the
+    // last euro box. Ink left of an empty box is no digit of it (a stub of the field's left
+    // border read as an unreadable box and lost the whole amount).
+    const euroBoxes = trailingRun(boxes.slice(0, 6));
     const centBoxes = boxes.slice(6, 8);
     const euros = euroBoxes.includes(null) ? "" : euroBoxes.join("");
     const cents = centBoxes.every((b) => typeof b === "string") ? centBoxes.join("") : "";
@@ -708,7 +733,29 @@ async function readFixedFields(colorCanvas: HTMLCanvasElement, ex: ExtractResult
   // The message, two rows of boxes. A word runs on from the end of the first row
   // ("RICH" + "ARD"), so the rows join without a space; an empty box is one.
   const rows = [];
-  for (const g of FIELDS.message) rows.push(await ocrGridText(colorCanvas, gridCells(fit, g)));
+  for (const [i, g] of FIELDS.message.entries()) {
+    if (i === 0) {
+      rows.push(await ocrGridText(colorCanvas, gridCells(fit, g)));
+      continue;
+    }
+    // The last row runs on past its boxes: the first row breaks after 12 characters and the
+    // second prints the rest, over the column's border ("UJZA PETREKOVÁ", 14). So it is read
+    // MESSAGE_RUN_ON boxes further, and those count only while the letters run on unbroken
+    // from the last box: what stands after a gap is the sender's DODÁVACIA POŠTA. A row that
+    // does not run on is read again in its own boxes: the wider crop sets the ink threshold a
+    // little differently, and a B standing on the rule read R.
+    const r = await ocrGridText(colorCanvas, gridCells(fit, { ...g, n: g.n + MESSAGE_RUN_ON }));
+    // Running on means a letter in the box after the last: where the border meets the rule
+    // under the row, their corner read "J." there.
+    if (!r.cells[g.n - 1]?.trim() || !/\p{L}/u.test(r.cells[g.n] ?? "")) {
+      rows.push(await ocrGridText(colorCanvas, gridCells(fit, g)));
+      continue;
+    }
+    let end = g.n;
+    while (end < r.cells.length && r.cells[end].trim()) end++;
+    const cells = r.cells.slice(0, end);
+    rows.push({ ...r, cells, text: cells.join(""), boxes: r.boxes.slice(0, end) });
+  }
   tries.message = rows.map((r) => `${r.boxes} (${r.shapes})`);
   const message = rows.map((r) => r.text).join("").replace(/\s+/g, " ").trim();
   // Mostly unreadable boxes ("A ??-k A?NT") are noise, not a message to check.

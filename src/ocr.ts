@@ -3,7 +3,7 @@
 
 import { createWorker, OEM, PSM, type Worker } from "tesseract.js";
 import { gridTiles, segmentCells, voteCells, voteCellsAt, type CellReading, type GridTile } from "./cells";
-import { accented } from "./text";
+import { accented, strip } from "./text";
 import type { BBox, OcrLine } from "./extract";
 
 export type Progress = (status: string, progress: number) => void;
@@ -161,15 +161,28 @@ async function readCell(w: Worker, tile: HTMLCanvasElement, aspect: number): Pro
   const narrow = aspect < NARROW;
   let last = { ch: "", confidence: 0 };
   let misread: string | undefined;
-  for (const mode of [PSM.SINGLE_CHAR, PSM.SINGLE_WORD, PSM.SINGLE_BLOCK]) {
-    await w.setParameters({ tessedit_pageseg_mode: mode });
-    const { data } = await w.recognize(tile);
-    last = { ch: data.text.trim(), confidence: data.confidence };
-    if (!isGoodCell(last)) continue;
-    if (!narrow || last.ch === "1") return last;
-    misread ??= last.ch;
+  for (const size of [1, 0.5]) {
+    const img = size === 1 ? tile : halfSize(tile);
+    for (const mode of [PSM.SINGLE_CHAR, PSM.SINGLE_WORD, PSM.SINGLE_BLOCK]) {
+      await w.setParameters({ tessedit_pageseg_mode: mode });
+      const { data } = await w.recognize(img);
+      last = { ch: data.text.trim(), confidence: data.confidence };
+      if (!isGoodCell(last)) continue;
+      if (!narrow || last.ch === "1") return last;
+      misread ??= last.ch;
+    }
+    if (misread) break;
   }
   return misread ? { ch: `${misread}?`, confidence: 0 } : last;
+}
+
+/**
+ * The tile at half its size. Tesseract returned nothing for a clean, isolated 0
+ * 58 px tall in every page mode; the same tile at half the size read 0 at 95.
+ * Only a tile no mode could read is tried again this way.
+ */
+function halfSize(tile: HTMLCanvasElement): HTMLCanvasElement {
+  return scaled(tile, 0.5);
 }
 
 /**
@@ -262,8 +275,9 @@ function cropGrid(canvas: HTMLCanvasElement, cells: BBox[]): { img: ImageData; c
   // 1.6 boxes: a grid placed a box out must see the letters it would leave outside (gridTiles).
   const left = Math.max(0, Math.floor(cells[0].x0 - pitch * 1.6));
   const right = Math.min(canvas.width, Math.ceil(cells[cells.length - 1].x1 + pitch * 1.6));
-  const y0 = Math.max(0, Math.floor(top - h * 0.3));
-  const y1 = Math.min(canvas.height, Math.ceil(bottom + h * 0.3));
+  // Above and below, room for the band to move onto the characters (gridTiles, rowShift).
+  const y0 = Math.max(0, Math.floor(top - h * 0.5));
+  const y1 = Math.min(canvas.height, Math.ceil(bottom + h * 0.5));
   if (right - left < 8 || y1 - y0 < 8) return undefined;
   const scale = GRID_CELL_HEIGHT / h;
   const c = document.createElement("canvas");
@@ -310,7 +324,7 @@ export async function ocrGridDigits(
   // stay box for box (placed on their own, two of three once sat a box apart).
   let gridOffset: number | undefined;
   for (const k of CELL_THRESHOLDS) {
-    const grid = gridTiles(crop.img, crop.cells, k, gridOffset);
+    const grid = gridTiles(crop.img, crop.cells, k, gridOffset, false);
     gridOffset ??= grid.offset;
     const tiles = grid.tiles;
     const reading: CellReading & { k: number; confidence: number } = { k, confidence: 100, cells: [] };
@@ -346,24 +360,62 @@ export async function ocrGridDigits(
 }
 
 const LETTERS = "AÁÄBCČDĎEÉFGHIÍJKLĹĽMNŇOÓÔPQRŔSŠTŤUÚVWXYÝZŽaáäbcčdďeéfghiíjklĺľmnňoóôpqrŕsštťuúvwxyýzž0123456789";
-/** Letters whose small form is a smaller copy of the capital: alone, only the height tells them apart. */
-const SAME_SHAPE = new Set([..."cčoóôsšvwxzž"]);
+/**
+ * Letters whose small form is a smaller copy of the capital: alone, only the height tells them
+ * apart. U and u differ by u's tail only, and a clean U read as u at 90.
+ */
+const SAME_SHAPE = new Set([..."cčoóôsšuúvwxzž"]);
 const MIN_CHAR_CONFIDENCE = 50;
 
 async function readLetter(w: Worker, tile: HTMLCanvasElement): Promise<{ ch: string; confidence: number }> {
-  let best = { ch: "", confidence: 0 };
-  for (const mode of [PSM.SINGLE_CHAR, PSM.SINGLE_WORD, PSM.SINGLE_BLOCK]) {
-    await w.setParameters({ tessedit_pageseg_mode: mode });
-    const { data } = await w.recognize(tile);
-    const ch = data.text.trim();
-    if (ch.length === 1 && data.confidence > best.confidence) best = { ch, confidence: data.confidence };
-    if (best.confidence >= 75) break;
+  // Tesseract reads one printed letter differently at each size: at the tile's own size it
+  // read a k as K and gave P and E nothing, at 0.7 it read them, at 0.5 a P came out D and at
+  // 0.4 p. On 53 letters of three photos 0.7 read 48, the full size 44. So two sizes are read,
+  // and a third breaks a disagreement; the letter most sizes give wins.
+  const reads: { ch: string; confidence: number }[] = [];
+  const same = (a: string, b: string) => strip(a) === strip(b);
+  for (const scale of LETTER_SCALES) {
+    const img = scaled(tile, scale);
+    let best = { ch: "", confidence: 0 };
+    for (const mode of [PSM.SINGLE_CHAR, PSM.SINGLE_WORD, PSM.SINGLE_BLOCK]) {
+      await w.setParameters({ tessedit_pageseg_mode: mode });
+      const { data } = await w.recognize(img);
+      const ch = data.text.trim();
+      if (ch.length === 1 && data.confidence > best.confidence) best = { ch, confidence: data.confidence };
+      if (best.confidence >= 75) break;
+    }
+    if (best.ch) reads.push(best);
+    if (reads.length === 2 && same(reads[0].ch, reads[1].ch)) break;
   }
-  return best;
+  if (!reads.length) return { ch: "", confidence: 0 };
+  // The letter most sizes agree on (case and accents aside), then its most common spelling.
+  const groups = new Map<string, { ch: string; confidence: number }[]>();
+  for (const r of reads) groups.set(strip(r.ch), [...(groups.get(strip(r.ch)) ?? []), r]);
+  const weight = (g: { confidence: number }[]) => g.length * 1000 + g.reduce((a, r) => a + r.confidence, 0);
+  const group = [...groups.values()].sort((a, b) => weight(b) - weight(a))[0];
+  const spellings = new Map<string, { ch: string; confidence: number }[]>();
+  for (const r of group) spellings.set(r.ch, [...(spellings.get(r.ch) ?? []), r]);
+  const pick = [...spellings.values()].sort((a, b) => weight(b) - weight(a))[0];
+  return { ch: pick[0].ch, confidence: Math.max(...pick.map((r) => r.confidence)) };
+}
+
+/** Sizes a letter tile is read at, in order: see readLetter. */
+const LETTER_SCALES = [0.7, 0.5, 0.4];
+
+function scaled(tile: HTMLCanvasElement, s: number): HTMLCanvasElement {
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(tile.width * s));
+  c.height = Math.max(1, Math.round(tile.height * s));
+  const ctx = c.getContext("2d")!;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(tile, 0, 0, c.width, c.height);
+  return c;
 }
 
 export interface GridText {
   text: string;
+  /** Per box: the character, a space for an empty box. */
+  cells: string[];
   /** The weakest character. */
   confidence: number;
   /** Per box: the character, "_" for an empty box, "?" when unreadable. */
@@ -379,7 +431,7 @@ export interface GridText {
  */
 export async function ocrGridText(canvas: HTMLCanvasElement, cells: BBox[]): Promise<GridText> {
   const crop = cropGrid(canvas, cells);
-  if (!crop) return { text: "", confidence: 0, boxes: "", shapes: "" };
+  if (!crop) return { text: "", cells: [], confidence: 0, boxes: "", shapes: "" };
   const tiles = gridTiles(crop.img, crop.cells, 0.5).tiles;
   const heights = tiles.filter((t): t is GridTile => !!t).map((t) => t.mainHeight).sort((a, b) => a - b);
   // Capitals are the tallest shapes of the row (accents are separate shapes, so they do not count).
@@ -388,7 +440,7 @@ export async function ocrGridText(canvas: HTMLCanvasElement, cells: BBox[]): Pro
   const foot = tall.length ? tall.map((t) => t.middle + t.mainHeight / 2).sort((a, b) => a - b)[tall.length >> 1] : 0;
   const w = await getOcrWorker();
   await w.setParameters({ tessedit_char_whitelist: LETTERS, user_defined_dpi: "300" });
-  const chars: { ch: string; confidence: number; lower?: boolean }[] = [];
+  const chars: { ch: string; confidence: number; lower?: boolean; apostrophe?: boolean }[] = [];
   for (const t of tiles) {
     if (!t) {
       chars.push({ ch: " ", confidence: 100 });
@@ -406,7 +458,7 @@ export async function ocrGridText(canvas: HTMLCanvasElement, cells: BBox[]): Pro
     if (t.parts === 1 && t.mainWidth <= t.mainHeight * 0.25) {
       const i = chars.length;
       const lone = !tiles[i - 1] && !tiles[i + 1];
-      chars.push(lone ? { ch: " ", confidence: 100 } : { ch: "I", confidence: 80 });
+      chars.push(lone ? { ch: " ", confidence: 100 } : { ch: "I", confidence: 80, apostrophe: t.apostrophe });
       continue;
     }
     const r = await readLetter(w, tileCanvas(t));
@@ -416,13 +468,15 @@ export async function ocrGridText(canvas: HTMLCanvasElement, cells: BBox[]): Pro
     }
     const lower = t.mainHeight < cap * 0.8;
     let ch = SAME_SHAPE.has(r.ch.toLowerCase()) ? (lower ? r.ch.toLowerCase() : r.ch.toUpperCase()) : r.ch;
+    // A p reaches below the line; one that stands on it is a P (read p at 0.4 of its size).
+    if (ch === "p" && t.middle + t.inkHeight / 2 <= foot + cap * 0.15) ch = "P";
     // Tesseract reads a lone é as e and Ý as Y. The cut-out knows there is a mark above
     // the letter: a vowel takes an acute, a consonant a caron. Accents are only added.
     // A caron touching its letter is no separate mark, but the letter stands taller than the
     // row's capitals (Š at 55 px against 44): the accent is there all the same.
     const marks = t.marks || (t.mainHeight > cap * 1.15 ? 1 : 0);
     if (marks && ch.normalize("NFD").length === 1) ch = accented(ch, marks);
-    chars.push({ ch, confidence: r.confidence, lower });
+    chars.push({ ch, confidence: r.confidence, lower, apostrophe: t.apostrophe });
   }
   // An unreadable box between empty ones (or the row's end) is a stub of a rule or a speck,
   // not a letter of the message: the column's border left one in the last box of a row.
@@ -437,10 +491,23 @@ export async function ocrGridText(canvas: HTMLCanvasElement, cells: BBox[]): Pro
     const near = [chars[i - 1], chars[i + 1]].filter((c) => c && isLetter(c.ch)).map((c) => c!.ch);
     if (near.length) chars[i].ch = near.some((c) => c === c.toLowerCase()) ? "l" : "I";
   }
+  // The apostrophe beside the letter is the caron of ľ, ť, ď and Ľ (Ť and Ď print theirs above,
+  // and a speck by a T read Ť). A bar with one is ľ: an I takes none.
+  for (const c of chars) {
+    if (!c.apostrophe) continue;
+    if (c.ch === "I") c.ch = "ľ";
+    else if ("lLtd".includes(c.ch)) c.ch = accented(c.ch, 1);
+  }
+  // A 0 between two letters is an O: the message is read with digits allowed ("PETREK0VÁ").
+  for (let i = 1; i < chars.length - 1; i++) {
+    if (chars[i].ch !== "0" || !isLetter(chars[i - 1].ch) || !isLetter(chars[i + 1].ch)) continue;
+    chars[i].ch = chars[i].lower ? "o" : "O";
+  }
   const boxes = chars.map((c) => (c.ch === " " ? "_" : c.ch)).join("");
-  const shapes = tiles.map((t) => (t ? `${t.mainWidth}x${t.mainHeight}${t.marks ? "+" + t.marks : ""}` : "_")).join(" ");
+  const shapes = tiles.map((t) => (t ? `${t.mainWidth}x${t.mainHeight}${t.marks ? "+" + t.marks : ""}${t.apostrophe ? "'" : ""}` : "_")).join(" ");
   return {
     text: chars.map((c) => c.ch).join(""),
+    cells: chars.map((c) => c.ch),
     confidence: Math.min(100, ...chars.map((c) => c.confidence)),
     boxes,
     shapes: `cap ${cap}: ${shapes}`,

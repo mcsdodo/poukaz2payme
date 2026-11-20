@@ -176,24 +176,52 @@ function components(
  * evened out the rule was as grey as the print on one photo.
  */
 function eraseRules(value: Uint8Array, w: number, h: number, limit: number, rules: { across: number; down: number }): void {
+  const ink = (x: number, y: number) => value[y * w + x] < limit;
+  // A rule on a photo is a little slanted and its print is uneven: it steps a pixel up or
+  // down every so often and has pale gaps, so along one pixel row it breaks into pieces
+  // shorter than the limit, and the pieces left on the letters standing on it read as part
+  // of them (B with a tail, U and R underlined). So a run follows the ink one pixel up or
+  // down, and a gap of up to GAP pixels does not end it.
+  const GAP = 2;
   const erase: number[] = [];
+  // In a run, the pieces of the row's own ink at least half the limit long: the rule's steps.
+  // The bottom of a letter standing on the rule is in the run (the rule is a pixel below it)
+  // but short, and stays: erased, a B's foot went and it read R.
+  const eraseRun = (x0: number, x1: number, y: number) => {
+    let a = -1;
+    let b = -1;
+    for (let x = x0; x <= x1 + GAP + 1; x++) {
+      if (x <= x1 && ink(x, y)) {
+        if (a < 0) a = x;
+        b = x;
+      } else if (a >= 0 && (x - b > GAP || x > x1)) {
+        if (b - a + 1 >= rules.across * 0.5) for (let i = a; i <= b; i++) if (ink(i, y)) erase.push(y * w + i);
+        a = -1;
+      }
+    }
+  };
   for (let y = 0; y < h; y++) {
     let start = -1;
+    let last = -1;
     for (let x = 0; x <= w; x++) {
-      const ink = x < w && value[y * w + x] < limit;
-      if (ink && start < 0) start = x;
-      if (!ink && start >= 0) {
-        if (x - start >= rules.across) for (let i = start; i < x; i++) erase.push(y * w + i);
+      const near = x < w && (ink(x, y) || (y > 0 && ink(x, y - 1)) || (y < h - 1 && ink(x, y + 1)));
+      if (near) {
+        if (start < 0) start = x;
+        last = x;
+      } else if (start >= 0 && (x - last > GAP || x === w)) {
+        if (last - start + 1 >= rules.across) eraseRun(start, last, y);
         start = -1;
       }
     }
   }
+  // Down a column the runs stay strict: tolerant, a faint box separator joined the stem of a
+  // B or a P standing next to it and took the stem with it, and the column's border split a K.
   for (let x = 0; x < w; x++) {
     let start = -1;
     for (let y = 0; y <= h; y++) {
-      const ink = y < h && value[y * w + x] < limit;
-      if (ink && start < 0) start = y;
-      if (!ink && start >= 0) {
+      const on = y < h && ink(x, y);
+      if (on && start < 0) start = y;
+      if (!on && start >= 0) {
         if (y - start >= rules.down) for (let i = start; i < y; i++) erase.push(i * w + x);
         start = -1;
       }
@@ -259,6 +287,112 @@ export interface GridTile extends Tile {
   parts: number;
   /** Middle of the ink, from the crop's top: punctuation sits low ("," ".") or in the middle ("-"). */
   middle: number;
+  /** A small upright mark beside the letter's top, left out of the tile: the caron of ľ, ť, ď. */
+  apostrophe: boolean;
+}
+
+/**
+ * Cuts a thin vertical tail off the top and the bottom of a shape: a piece of a
+ * rule the letter touches. The column's border is printed in the form's green,
+ * pale enough that it breaks into runs too short to erase as a rule, and where
+ * it crosses an O the two read as one shape 82 px tall in a row of 47 px
+ * capitals: an O with an accent. Only a tail at least a tenth of a box long
+ * goes, so a caron touching its letter (Š) stays, and only when a letter's
+ * height is left.
+ */
+function trimTails(c: Component, label: Int32Array, w: number, cellH: number, typical: number): void {
+  const thin = Math.max(3, cellH * 0.06);
+  const inkIn = (y: number) => {
+    let n = 0;
+    for (let x = c.x0; x <= c.x1; x++) if (label[y * w + x] === c.id) n++;
+    return n;
+  };
+  const clear = (y: number) => {
+    for (let x = c.x0; x <= c.x1; x++) {
+      if (label[y * w + x] === c.id) {
+        label[y * w + x] = 0;
+        c.area--;
+      }
+    }
+  };
+  let top = c.y0;
+  while (top < c.y1 && inkIn(top) <= thin) top++;
+  let bottom = c.y1;
+  while (bottom > top && inkIn(bottom) <= thin) bottom--;
+  // What is left must still be a letter: a K the border ran through is thin all the way down.
+  if (bottom - top + 1 < typical * 0.8) return;
+  if (top - c.y0 >= cellH * 0.1) {
+    for (let y = c.y0; y < top; y++) clear(y);
+    c.y0 = top;
+  }
+  if (c.y1 - bottom >= cellH * 0.1) {
+    for (let y = bottom + 1; y <= c.y1; y++) clear(y);
+    c.y1 = bottom;
+  }
+}
+
+/**
+ * A small upright mark just right of a tall letter's top half: the caron that
+ * ľ, ť and ď print as an apostrophe ("Veľké"). It stands beside the letter, not
+ * above it, so it is no accent, and it was dropped as a speck.
+ */
+function isApostrophe(c: Component, l: Component, pitch: number): boolean {
+  const cw = c.x1 - c.x0 + 1;
+  const ch = c.y1 - c.y0 + 1;
+  const lh = l.y1 - l.y0 + 1;
+  return (
+    c !== l &&
+    ch >= cw &&
+    ch >= 4 &&
+    ch <= lh * 0.45 &&
+    c.x0 >= l.x1 - 2 &&
+    c.x0 <= l.x1 + pitch * 0.3 &&
+    c.y0 >= l.y0 - lh * 0.15 &&
+    c.y1 <= l.y0 + lh * 0.5
+  );
+}
+
+/**
+ * How far the printed characters sit below the row's band (negative: above), in
+ * crop pixels. The template fit can be off by a third of a box up or down on a
+ * photo taken at an angle: the amount's band then took in the SLOVOM label under
+ * it, whose letters outnumbered the digits and moved the grid a box sideways
+ * (2,09 for 20,90), and the KS digits printed high were cut at the band's top.
+ * The row is where the large shapes are: box characters print at about half the
+ * box height, labels at a quarter, so the middle is weighed by ink. Only shapes
+ * within half a box of the band count, so an empty grid does not move onto the
+ * next row's digits (the reference number under SS). Small moves are left alone.
+ */
+function rowShift(
+  img: Image,
+  k: number,
+  rules: { across: number; down: number },
+  cells: { x0: number; y0: number; x1: number; y1: number }[],
+  cellH: number,
+  pitch: number,
+): number {
+  const top = Math.min(...cells.map((c) => c.y0));
+  const bottom = Math.max(...cells.map((c) => c.y1));
+  const center = (top + bottom) / 2;
+  const left = cells[0].x0 - pitch;
+  const right = cells[cells.length - 1].x1 + pitch;
+  const { comps } = components(img, k, rules);
+  const big = comps
+    .filter((c) => {
+      const cw = c.x1 - c.x0 + 1;
+      const ch = c.y1 - c.y0 + 1;
+      const mx = (c.x0 + c.x1) / 2;
+      const my = (c.y0 + c.y1) / 2;
+      return !c.edge && ch >= cellH * 0.33 && ch <= cellH * 1.1 && cw >= 3 && cw <= pitch * 1.5 && mx >= left && mx <= right && Math.abs(my - center) <= cellH * 0.5;
+    })
+    .map((c) => ({ y: (c.y0 + c.y1) / 2, weight: c.area }))
+    .sort((a, b) => a.y - b.y);
+  const total = big.reduce((s, c) => s + c.weight, 0);
+  if (!total) return 0;
+  let acc = 0;
+  const mid = big.find((c) => (acc += c.weight) >= total / 2)!.y;
+  const dy = mid - center;
+  return Math.abs(dy) >= cellH * 0.1 ? Math.max(-cellH * 0.4, Math.min(cellH * 0.4, dy)) : 0;
 }
 
 /**
@@ -276,16 +410,23 @@ export function gridTiles(
   k: number,
   /** The placement an earlier threshold chose: readings at several thresholds must stay box-aligned. */
   placed?: number,
+  /**
+   * Keep accents and punctuation with the letters (the message). Digits have none: a speck
+   * at the foot of a 0 counted as its full stop, and "0." read as nothing.
+   */
+  marks = true,
 ): { tiles: (GridTile | null)[]; offset: number } {
   if (!cells.length) return { tiles: [], offset: 0 };
   const { width: w } = img;
   const pitch = (cells[cells.length - 1].x1 - cells[0].x0) / cells.length;
-  const top = Math.min(...cells.map((c) => c.y0));
-  const bottom = Math.max(...cells.map((c) => c.y1));
   // One box's height: the row's whole band is taller when the photo is a little tilted.
   const cellH = cells.map((c) => c.y1 - c.y0).sort((a, b) => a - b)[cells.length >> 1];
   // A letter stroke is under 0.6 of a box tall and well under a box wide; the rules run on.
-  const { comps, label } = components(img, k, { across: pitch * 1.2, down: cellH * 0.9 }, { y0: Math.floor(top), y1: Math.ceil(bottom) });
+  const rules = { across: pitch * 1.2, down: cellH * 0.9 };
+  const dy = rowShift(img, k, rules, cells, cellH, pitch);
+  const top = Math.min(...cells.map((c) => c.y0)) + dy;
+  const bottom = Math.max(...cells.map((c) => c.y1)) + dy;
+  const { comps, label } = components(img, k, rules, { y0: Math.floor(top), y1: Math.ceil(bottom) });
   const mid = (c: Component) => ({ x: (c.x0 + c.x1) / 2, y: (c.y0 + c.y1) / 2 });
   const size = (c: Component) => ({ w: c.x1 - c.x0 + 1, h: c.y1 - c.y0 + 1 });
   // Slivers an erased rule leaves are 1-2 px thin; the rest must sit in the row, and form
@@ -303,9 +444,14 @@ export function gridTiles(
   // against 50 px capitals), not an l or an I.
   const heights = tallish.map((c) => size(c).h).sort((a, b) => a - b);
   const typical = heights.length ? heights[heights.length >> 1] : cellH;
+  for (const c of tallish) if (size(c).h > typical * 1.3 && size(c).w > cellH * 0.12) trimTails(c, label, w, cellH, typical);
   // A letter is at least 0.6 of the row's usual height (lowercase a: 36 px against 47 px);
   // half a letter (8x27 in an empty box) is a fragment.
-  const letters = tallish.filter((c) => size(c).h >= typical * 0.6 && !(size(c).w <= cellH * 0.12 && size(c).h > typical * 1.3));
+  const inRow = tallish.filter((c) => size(c).h >= typical * 0.6 && !(size(c).w <= cellH * 0.12 && size(c).h > typical * 1.3));
+  // A shape that starts below the middle of the row's letters is the label under the row (the
+  // Č of ČÍTACIA ZÓNA under a message printed low), not a letter of it.
+  const lineFoot = inRow.length ? inRow.map((c) => c.y1).sort((a, b) => a - b)[inRow.length >> 1] : bottom;
+  const letters = inRow.filter((c) => c.y0 < lineFoot - typical * 0.4);
   // Small marks count only where print puts them: a hyphen is a flat dash (0.13 of the box
   // height wide, 3-4 px tall); an accent or a caron sits just above a letter (7x8 px for é);
   // a comma or a full stop at the letters' foot. Dust anywhere else is not read.
@@ -316,6 +462,7 @@ export function gridTiles(
   const besideLetter = (c: Component) => letters.some((l) => Math.abs(mid(l).x - mid(c).x) <= pitch * 1.5);
   const shapes = candidates.filter((c) => {
     if (letters.includes(c)) return true;
+    if (!marks) return false;
     if (tallish.includes(c)) return false;
     const { w: cw, h: ch } = size(c);
     // A hyphen sits at mid-letter height; a flat scrap of a rule at the letters' foot was read
@@ -327,8 +474,11 @@ export function gridTiles(
       const lw = l.x1 - l.x0;
       return c.y1 <= l.y0 + 3 && c.y1 >= l.y0 - cellH * 0.3 && mid(c).x >= l.x0 - lw * 0.3 && mid(c).x <= l.x1 + lw * 0.3;
     });
-    const stop = ch >= 4 && c.y1 >= foot - cellH * 0.05 && c.y1 <= foot + cellH * 0.15 && besideLetter(c);
-    return accent || stop;
+    // A comma or a full stop follows its letter in the next box (a speck two boxes after
+    // the row's last letter read as a trailing comma).
+    const follows = letters.some((l) => mid(c).x > mid(l).x && mid(c).x - mid(l).x <= pitch * 1.2);
+    const stop = ch >= 4 && c.y1 >= foot - cellH * 0.05 && c.y1 <= foot + cellH * 0.15 && follows;
+    return accent || stop || letters.some((l) => isApostrophe(c, l, pitch));
   });
   const centerOf = (i: number) => (cells[i].x0 + cells[i].x1) / 2;
   const nearest = (x: number) => Math.round((x - centerOf(0)) / pitch);
@@ -357,14 +507,19 @@ export function gridTiles(
     const i = nearest(mid(c).x - offset);
     if (i >= 0 && i < cells.length) boxes[i].push(c);
   }
-  const tiles = boxes.map((parts) => {
-    if (!parts.length) return null;
+  const tiles = boxes.map((all) => {
+    if (!all.length) return null;
+    const tallest = all.reduce((a, b) => (b.y1 - b.y0 > a.y1 - a.y0 ? b : a));
+    // The caron of ľ, ť, ď prints as an apostrophe beside the letter. It is left out of the
+    // tile (Tesseract read l' as nothing) and added after.
+    const apostrophe = all.some((c) => c !== tallest && isApostrophe(c, tallest, pitch));
+    const parts = all.filter((c) => c === tallest || !isApostrophe(c, tallest, pitch));
     const t = tileOf(label, w, parts);
-    const main = parts.reduce((a, b) => (b.y1 - b.y0 > a.y1 - a.y0 ? b : a));
+    const main = tallest;
     const y0 = Math.min(...parts.map((c) => c.y0));
     const y1 = Math.max(...parts.map((c) => c.y1));
     const marks = parts.filter((c) => c !== main && c.y1 <= main.y0 + 3).length;
-    return { ...t, mainHeight: main.y1 - main.y0 + 1, mainWidth: main.x1 - main.x0 + 1, marks, parts: parts.length, middle: (y0 + y1) / 2 };
+    return { ...t, mainHeight: main.y1 - main.y0 + 1, mainWidth: main.x1 - main.x0 + 1, marks, parts: parts.length, middle: (y0 + y1) / 2, apostrophe };
   });
   return { tiles, offset };
 }

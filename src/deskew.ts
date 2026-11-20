@@ -116,3 +116,26 @@ export function rotatedSize(w: number, h: number, deg: number): { w: number; h: 
   const sin = Math.abs(Math.sin(r));
   return { w: Math.round(w * cos + h * sin), h: Math.round(w * sin + h * cos) };
 }
+
+/**
+ * Share of the form that lies inside the photo, for a code at `quad` (the code
+ * level after a turn by `deg`). The form reaches about one code width above the
+ * code, 0.85 left of it and 0.2 right. A photo of one form often shows the edge
+ * of another, with its code whole and its fields cut off: on one photo zxing
+ * read that code first, and the scan read nothing but the IBAN.
+ */
+export function formShareInFrame(quad: Point[], w: number, h: number, deg: number): number {
+  const pts = deg ? quad.map((p) => rotatePoint(p, w, h, -deg)) : quad;
+  const size = deg ? rotatedSize(w, h, -deg) : { w, h };
+  const xs = pts.map((p) => p.x);
+  const ys = pts.map((p) => p.y);
+  const code = Math.max(...xs) - Math.min(...xs);
+  if (code <= 0) return 0;
+  const x0 = Math.min(...xs) - code * 0.85;
+  const x1 = Math.max(...xs) + code * 0.2;
+  const y0 = Math.min(...ys) - code;
+  const y1 = Math.max(...ys);
+  const ix = Math.max(0, Math.min(x1, size.w) - Math.max(x0, 0));
+  const iy = Math.max(0, Math.min(y1, size.h) - Math.max(y0, 0));
+  return (ix * iy) / ((x1 - x0) * (y1 - y0));
+}

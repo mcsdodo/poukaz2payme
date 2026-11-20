@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026-11-20]
+
+### Fixed
+- ocr: with two forms in the photo, the scan reads the one whose fields are in the frame, not the cut-off one whose barcode zxing found first
+- ocr: a photo taken at an angle no longer reads the amount a box out (2,09 for 20,90); the box rows move onto the printed characters
+- ocr: a stub of a box line left of the "=" no longer empties the amount, and a clean 0 that Tesseract skipped is read
+- ocr: the message reads ľ, ť and ď, U and P, letters standing on a slanted rule, and a second row that runs past its boxes ("LUJZA PETREKOVÁ")
+
 ## [2026-11-09]
 
 ### Added
