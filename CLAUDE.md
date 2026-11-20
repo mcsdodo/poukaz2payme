@@ -173,15 +173,15 @@ misread in this repository only as far as a rule needs it.
     hyphen as a flat dash, a comma or full stop at the letters' foot in the box after a
     letter, and punctuation only next to a letter. A letter is at least 0.6 of the row's
     usual height. The caron of ľ, ť, ď and Ľ prints as an apostrophe beside the letter's
-    top: it is kept out of the tile and added after (`isApostrophe`; `Veľké` read `Velké`).
+    top: it is kept out of the tile and added after (`isApostrophe`; a ľ read as l).
     Ť and Ď print theirs above, so a speck beside a T is no caron. Digit grids keep no
     marks: a speck at a 0's foot joined it as `0.` and the box read nothing.
   - Each letter is read alone (`ocrGridText` in [ocr.ts](src/ocr.ts)). Alone, Tesseract
     cannot tell `c o s v w x z` from their capitals, so the height decides; it returns
-    nothing for a bare bar, so a one-shape bar is `l` or `I` by its neighbours (`Malé`,
-    `RICH`); it reads `é` as `e`, so a mark above the letter adds an acute to a vowel and a
+    nothing for a bare bar, so a one-shape bar is `l` or `I` by its neighbours (`Sliepky`,
+    `MARTIN`); it reads `é` as `e`, so a mark above the letter adds an acute to a vowel and a
     caron to a consonant (`accented` in [text.ts](src/text.ts)). The rows join without a
-    space (`RICH` + `ARD`); an empty box is a space. `U`/`u` also go by height (a clean U
+    space (`M` + `ARTIN`); an empty box is a space. `U`/`u` also go by height (a clean U
     read `u` at 90), a `p` standing on the line is `P`, and a `0` between letters is `O`.
   - **Tesseract reads one letter differently at each size.** At the tile's own size (capitals
     about 47 px) it gave `K` for k and nothing for P and E; at 0.7 it read them, at 0.5 a P
@@ -190,22 +190,22 @@ misread in this repository only as far as a rule needs it.
     and takes the letter most sizes give. A digit no page mode reads (a clean 0 got nothing
     in all three) is read again at half the size, where it read 0 at 95 (`readCell`).
   - **The message's second row runs on past its 12 boxes.** The first row breaks after 12
-    characters and the second prints the rest, over the column's border (`UJZA PETREKOVÁ`,
-    14), so it is read 6 boxes further. The extra boxes count only when the 12th box holds
+    characters and the second prints the rest, over the column's border (14
+    characters on one photo), so it is read 6 boxes further. The extra boxes count only when the 12th box holds
     a character and the 13th a letter, and only while the letters run on unbroken; the
     border meeting the rule under the row read `J.` there. A row that does not run on is
     read again in its own 12 boxes: the wider crop moves the ink threshold, and a B on the
     rule read R.
   - Digits use the same grid at three thresholds, voted per box (`ocrGridDigits`). Where
-    the grid read part of a field (`112?13`), the label-based fallback must fit that
-    pattern: on a 970 px frame it read `1126130`. The euros are the run of boxes that ends
+    the grid read part of a field (`445?77`), the label-based fallback must fit that
+    pattern: on a 970 px frame it read a seventh digit, KS's first 0. The euros are the run of boxes that ends
     at the last euro box: a stub of the field's left border, three empty boxes left of the
     `=`, read as an unreadable box and emptied the amount.
   - A grid one box out leaves its stray character within a box of its end, so only ink that
     close counts as outside: K. SPRAC.'s `3` stands 1.4 boxes right of the amount's cents.
   - **The grid can land a whole box out.** The nudge picks the nearest box, so a fit off by
-    about half a box (15 px on a portrait photo) put the VS/KS grid one box left: VS read
-    `11261`, KS `3017`. So VS and KS are read as one row of 14 boxes (they print as one; KS
+    about half a box (15 px on a portrait photo) put the VS/KS grid one box left: VS lost
+    its last digit and KS read VS's last digit in front of its own first three. So VS and KS are read as one row of 14 boxes (they print as one; KS
     fills its 4), the crop reaches 1.6 boxes past the grid, and `gridTiles` also tries one box
     left and right and keeps the placement that leaves no character-shaped ink outside. Only
     character-shaped ink counts: the KS bracket's stroke `┐` once pulled the grid a box the
@@ -215,19 +215,19 @@ misread in this repository only as far as a rule needs it.
     accent even when it touches the letter. A hyphen must sit at mid-letter height (a flat
     scrap of a rule at the foot read as one). A bare bar, or an unreadable box, with nothing
     on either side is a stub of a rule, not a letter.
-  - Placed by the barcode alone, VS, KS and SS are not read (a soft shot gave VS `128101`),
+  - Placed by the barcode alone, VS, KS and SS are not read (a soft shot gave a wrong VS),
     and a message with more than a tenth of its boxes unreadable is dropped.
   - The name's copies are still found by their labels: a fixed box around both copies
     picked up the address's second line when the fit was off. Only the middle copy's first
     line is re-read from a fixed box (`FIELDS.middleName`), kept tight to that line.
-  - On both photos at all sizes the message reads `MŠ-Malé,RICHARD LAČNÝ`, except at
+  - On both photos at all sizes the message reads exactly, except at
     1300 px (two accents lost, the marks are a few pixels). With the form at 970 px it is
     garbled, and VS is left empty rather than wrong.
   - Three more photos (3000x4000, two forms in each, one held down by fingers over the
     code's digits, one at an angle) read every IBAN, amount, VS, KS and SS at full size, at
     1600 px and turned a quarter or upside down; at 1200 px one VS is left empty. Two of the
-    three messages read exactly; on the third the second row prints on the rule and its E
-    loses its foot (`PFTREK`). Test copies of a photo must apply its EXIF orientation first
+    three messages read exactly; on the third the second row prints on the rule and an E
+    loses its foot and reads F. Test copies of a photo must apply its EXIF orientation first
     (these are stored 4000x3000 with orientation 6): resized without it, every copy failed.
   - Eleven distinct real photos in all (five of one form at different light and distance,
     one other school's form in a typewriter-like font) read 69 of 77 fields; the build
@@ -295,7 +295,7 @@ misread in this repository only as far as a rule needs it.
     printed character and reads it alone. With a fit the grids above do this job. A result counts
     only when every character has confidence >= 70, and only with enough characters: 4 for KS
     (it prints leading zeros), 2 for VS and SS. A smaller photo gave a confident VS `1` for
-    112606 when one shape survived the threshold. A shape under 0.7 of the tallest is a piece
+    a six-digit VS when one shape survived the threshold. A shape under 0.7 of the tallest is a piece
     of the label or the next box, not a digit. The crop is scaled to 230 px tall: at a fixed
     3x a small photo gave 54 px digits and a clean `1` read as `4` at 90. Even at 230 px a
     clean, well cut `1` read as `4` at 84, so the shape decides too: a printed `1` is about
@@ -315,11 +315,12 @@ misread in this repository only as far as a rule needs it.
     from its own crop, so there are up to four readings. They are aligned letter by letter to
     the middle one, and each place takes the choice with the most confidence. Readings
     further than 0.4 from the middle one are of another line and are left out. One photo gave
-    `SF OJENÁ`, `ŠSPOJENÁ`, `"SPOJENÁ` and `[5 JENA`; the vote gave `SPOJENÁ`. What made it
+    (on fake text, the same mistakes) `ZF KLADNÁ`, `ŠZÁKLADNÁ`, `"ZÁKLADNÁ` and `[5 KLADNA`;
+    the vote gave `ZÁKLADNÁ`. What made it
     work: box marks and quotes are dropped first; a letter for a space costs more than an
     insertion, so a split word does not lose a letter; and an accent wins unless the plain
     letter has more than twice its weight, because OCR drops accents far more often than it
-    adds them. Readings stop early (OCR split the line, or read it only to `MARKU`): the
+    adds them. Readings stop early (OCR split the line, or read only its first word and a half): the
     alignment skips either end of the frame at half a letter's cost (free, it skipped
     misread letters instead), a skip of 3 or more does not vote, and the frame is a reading
     that reaches further than the middle one. At the line's two ends a letter some readings

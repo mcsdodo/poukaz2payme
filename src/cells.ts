@@ -269,7 +269,7 @@ export function segmentCells(img: Image, k: number): Tile[] {
       const cw = c.x1 - c.x0 + 1;
       const ch = c.y1 - c.y0 + 1;
       // Digits print at one height. A shape about half as tall is a piece of the
-      // label or of the next box (seen: three such pieces around VS 112613).
+      // label or of the next box (seen: three such pieces around a VS).
       return ch >= tallest * 0.7 && cw <= tallest * 1.5;
     })
     .sort((a, b) => a.x0 - b.x0)
@@ -333,7 +333,7 @@ function trimTails(c: Component, label: Int32Array, w: number, cellH: number, ty
 
 /**
  * A small upright mark just right of a tall letter's top half: the caron that
- * ľ, ť and ď print as an apostrophe ("Veľké"). It stands beside the letter, not
+ * ľ, ť and ď print as an apostrophe ("Motýľ"). It stands beside the letter, not
  * above it, so it is no accent, and it was dropped as a speck.
  */
 function isApostrophe(c: Component, l: Component, pitch: number): boolean {
@@ -466,7 +466,7 @@ export function gridTiles(
     if (tallish.includes(c)) return false;
     const { w: cw, h: ch } = size(c);
     // A hyphen sits at mid-letter height; a flat scrap of a rule at the letters' foot was read
-    // as one ("RICHARD-LAČNÝ" for an empty box).
+    // as one ("MARTIN-HUDEC" for an empty box).
     const dashHeight = mid(c).y <= foot - typical * 0.2 && mid(c).y >= foot - typical * 0.75;
     if (cw >= cellH * 0.1 && cw >= ch * 2 && c.area >= cellH * 0.3) return besideLetter(c) && dashHeight;
     if (c.area < 8) return false;

@@ -502,7 +502,7 @@ export async function ocrGridText(canvas: HTMLCanvasElement, cells: BBox[]): Pro
     const blank = (c?: { ch: string }) => !c || c.ch === " ";
     if (chars[i].ch === "?" && blank(chars[i - 1]) && blank(chars[i + 1])) chars[i] = { ch: " ", confidence: 100 };
   }
-  // l and I are one shape in this font: the letters next to it decide (Malé, RICH).
+  // l and I are one shape in this font: the letters next to it decide (Sliepky, MARTIN).
   const isLetter = (c: string) => /\p{L}/u.test(c) && !"lI".includes(c);
   for (let i = 0; i < chars.length; i++) {
     if (chars[i].ch !== "l" && chars[i].ch !== "I") continue;
@@ -516,7 +516,7 @@ export async function ocrGridText(canvas: HTMLCanvasElement, cells: BBox[]): Pro
     if (c.ch === "I") c.ch = "ľ";
     else if ("lLtd".includes(c.ch)) c.ch = accented(c.ch, 1);
   }
-  // A 0 between two letters is an O: the message is read with digits allowed ("PETREK0VÁ").
+  // A 0 between two letters is an O: the message is read with digits allowed ("NOVÁK0VÁ").
   for (let i = 1; i < chars.length - 1; i++) {
     if (chars[i].ch !== "0" || !isLetter(chars[i - 1].ch) || !isLetter(chars[i + 1].ch)) continue;
     chars[i].ch = chars[i].lower ? "o" : "O";

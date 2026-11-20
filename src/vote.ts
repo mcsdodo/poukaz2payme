@@ -3,8 +3,9 @@
 // The payee's address is printed twice on the form (the stub on the left and
 // the ADRESÁT block in the middle), and each copy can be read twice: by the
 // page OCR and again from its own crop. Every reading has different mistakes:
-// on one photo the stub gave "SF OJENÁ ŠKOLA" and the middle copy "ŠSPOJENÁ
-// ŠKOLA". Aligned letter by letter, the majority at each place is right more
+// on one photo the stub split the first word in two with a wrong letter, and
+// the middle copy put an extra letter in front of it (on fake text: "ZF KLADNÁ"
+// and "ŠZÁKLADNÁ"). Aligned letter by letter, the majority at each place is right more
 // often than any single reading.
 
 import { strip } from "./text";
@@ -28,7 +29,7 @@ const MAX_DISTANCE = 0.5;
 /**
  * Same letter up to case or accent: a near miss, cheaper than a different
  * letter. A letter for a space costs more than an insertion: OCR splits words
- * ("SF OJENÁ" for "SPOJENÁ"), and the space must be a gap, not take the letter's place.
+ * ("ZF KLADNÁ" for "ZÁKLADNÁ"), and the space must be a gap, not take the letter's place.
  */
 function cost(a: string, b: string): number {
   if (a === b) return 0;
@@ -130,7 +131,7 @@ function weight(confidence: number): number {
  */
 function winner(votes: Map<string, number>, edge = false): string {
   // At either end of the line, a letter some readings have and others lack was cut off by
-  // the photo's edge or the crop (a cut stub gave "POJENÁ"): the letter wins unless its
+  // the photo's edge or the crop (a cut stub lost the first letter): the letter wins unless its
   // absence has more than twice its weight. Inside the line the plain majority decides.
   const none = votes.get("") ?? 0;
   const letters = [...votes].filter(([o]) => /[\p{L}\p{N}]/u.test(o)).sort((a, b) => b[1] - a[1]);
@@ -163,7 +164,7 @@ function winner(votes: Map<string, number>, edge = false): string {
  * common choice, each reading weighted by its confidence.
  */
 export function consensus(readings: Reading[]): Consensus | undefined {
-  // A name holds no dollar sign: it is OCR's Š (a typewriter-like font read "M$" for MŠ).
+  // A name holds no dollar sign: it is OCR's Š (a typewriter-like font read "Z$" for ZŠ).
   const rs = readings.map((r) => ({ ...r, text: r.text.replace(JUNK, " ").replace(/\$/g, "Š").replace(/\s+/g, " ").trim() })).filter((r) => r.text);
   if (!rs.length) return undefined;
   const middle = rs

@@ -38,7 +38,7 @@ One entry per photo (example with fake values:
 - `about`: what makes the photo hard (a second form, shadow, blur, an unusual font).
 - `expect`: the fields as the form prints them. `iban` may have spaces, `amount` is `20,90`,
   an empty SS is `""`, `name` is the payee's first line without a trailing comma, `message`
-  is both rows joined (`MŠ-Malé,RICHARD LAČNÝ`). Leave out a field you do not want checked.
+  is both rows joined (`MŠ-Sliepky,MARTIN HUDEC`). Leave out a field you do not want checked.
 
 ## Running
 

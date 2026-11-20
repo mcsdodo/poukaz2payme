@@ -6,7 +6,7 @@
 - ocr: with two forms in the photo, the scan reads the one whose fields are in the frame, not the cut-off one whose barcode zxing found first
 - ocr: a photo taken at an angle no longer reads the amount a box out (2,09 for 20,90); the box rows move onto the printed characters
 - ocr: a stub of a box line left of the "=" no longer empties the amount, and a clean 0 that Tesseract skipped is read
-- ocr: the message reads ľ, ť and ď, U and P, letters standing on a slanted rule, and a second row that runs past its boxes ("LUJZA PETREKOVÁ")
+- ocr: the message reads ľ, ť and ď, U and P, letters standing on a slanted rule, and a second row that runs past its boxes
 - ocr: a barcode too blurred to decode is read from a sharpened crop of it, or from the digits printed under it, so a soft photo gets its IBAN
 - ocr: a VS with a speck left of it, a capital Í, a Š read as "$" in the name and a box mark before the name no longer spoil those fields; a garbled message is left empty
 
