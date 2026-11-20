@@ -152,3 +152,24 @@ export function productAdvice(product: string | undefined): ProductAdvice | unde
       return undefined;
   }
 }
+
+/**
+ * A poukaz code from the digits OCR read under its bars, which may carry other
+ * digits before or after. A run of 48 or 50 digits counts only when its IBAN
+ * passes mod 97. The other fields count only when the mod-11 check digit holds
+ * too: once a misread 6 among the amount digits passed the IBAN check and gave
+ * 6000,00. Without it the IBAN alone is kept, and `mod11` is "n/a".
+ */
+export function poukazFromDigitLine(text: string): PoukazBarcode | undefined {
+  const found: PoukazBarcode[] = [];
+  for (const len of [48, 50]) {
+    for (let i = 0; i + len <= text.length; i++) {
+      const p = parsePoukazBarcode(text.slice(i, i + len));
+      if (p?.ibanValid) found.push(p);
+    }
+  }
+  const whole = found.find((p) => p.mod11 === "ok");
+  if (whole) return whole;
+  if (!found.length) return undefined;
+  return { ...found[0], vs: undefined, ks: undefined, ss: undefined, amountCents: undefined, mod11: "n/a" };
+}

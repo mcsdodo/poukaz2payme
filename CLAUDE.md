@@ -82,6 +82,16 @@ caused most of the camera trouble. Two things learnt from it still matter for ph
   cell threshold moves up when the crop has contrast but no ink below it.
 - A small photo (under 2400 px) with no decodable code is decoded again at 2x
   (`decodePoukaz`): at 460 px across the code zxing never read it, at 1.5x it did.
+- **A located code is rescued (`rescueCode` in [main.ts](src/main.ts)):** cut out with a
+  margin, scaled so the code is 1700 px wide, contrast stretched and sharpened (unsharp
+  mask, amount 2), it decoded on a soft 3200x1800 photo where the whole photo gave nothing,
+  and that photo had no IBAN at all before. On a dark photo with motion blur the bars stayed
+  smeared, but the digits under them read exactly in Tesseract's block mode (line mode gave
+  nothing, sparse mode split them). `poukazFromDigitLine` ([poukaz.ts](src/poukaz.ts)) takes
+  48 or 50 of them only with a valid IBAN, and the other fields only when mod-11 holds too:
+  one misread 6 in the amount digits passed the IBAN check and gave 6000,00. The rescue
+  gives data only; the form is still cut by the located box (cut by the rescued corners,
+  the soft photo lost its amount to page OCR). `diag.barcodeRescue` shows the tries.
 - `diag.capture` is `file`, or the blank-retry note. Chrome on Android uses its native
   barcode detector first, then zxing.
 - **Two forms in one photo:** a photo of one form often shows the edge of another with its
@@ -209,6 +219,14 @@ caused most of the camera trouble. Two things learnt from it still matter for ph
     three messages read exactly; on the third the second row prints on the rule and its E
     loses its foot (`PFTREK`). Test copies of a photo must apply its EXIF orientation first
     (these are stored 4000x3000 with orientation 6): resized without it, every copy failed.
+  - Eleven distinct real photos in all (five of one form at different light and distance,
+    one other school's form in a typewriter-like font) read 69 of 77 fields; the build
+    before read 55, with two wrong amounts and no warning (140,00 for 40,00, 3171510,00 for
+    37,50). None of the misses is a wrong payment value: a dark photo leaves amount, VS and
+    KS empty (placed by the code alone), and the rest are message letters or a missing
+    accent. The typewriter form printed its message over the label above the boxes; it
+    read `-?-VÉ č-`, so a box message under 70% letters and digits is dropped. OCR read its
+    Š as `$`, which the name vote now reads as Š; Í, read `í`, goes by height like U.
 - **Solid:** IBAN from the Code 128C barcode, accepted when it passes mod-97. The payme link
   matches the example in the SBA standard (unit test). PAY by square round-trips through
   `bysquare` decode (unit test).

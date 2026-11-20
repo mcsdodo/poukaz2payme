@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { decode } from "bysquare/pay";
 import { bbanToIban, isValidIban, isValidLegacyPart, mod97 } from "../src/iban";
-import { mod11CheckDigit, parsePoukazBarcode } from "../src/poukaz";
+import { mod11CheckDigit, parsePoukazBarcode, poukazFromDigitLine } from "../src/poukaz";
 import { buildBySquare, buildPaymeLink, parseAmount, toAscii } from "../src/payme";
 import { extractFields, findIban, type OcrLine } from "../src/extract";
 import { gridTiles, segmentCells, voteCells } from "../src/cells";
@@ -116,6 +116,26 @@ describe("poukaz barcode", () => {
   it("rejects other lengths", () => {
     expect(parsePoukazBarcode("12345")).toBeNull();
     expect(parsePoukazBarcode("abc")).toBeNull();
+  });
+});
+
+describe("poukaz code from the digits under the bars", () => {
+  // Read by OCR from two blurred photos whose bars zxing could not decode.
+  const code = "380001250200000000254659995800000000003000000007";
+  it("finds the code among other digits", () => {
+    const p = poukazFromDigitLine("0009039990990" + code);
+    expect(p?.iban).toBe("SK2502000000002546599958");
+    expect(p?.mod11).toBe("ok");
+  });
+  it("keeps only the IBAN when a misread digit breaks the check digit", () => {
+    // Seen: 3006000007 for 3000000007, which gave an amount of 6000,00.
+    const p = poukazFromDigitLine(code.replace("3000000007", "3006000007"));
+    expect(p?.iban).toBe("SK2502000000002546599958");
+    expect(p?.amountCents).toBeUndefined();
+    expect(p?.mod11).toBe("n/a");
+  });
+  it("gives nothing when the IBAN fails", () => {
+    expect(poukazFromDigitLine(code.replace("2546", "2547"))).toBeUndefined();
   });
 });
 
@@ -470,6 +490,17 @@ describe("name vote", () => {
   it("leaves out readings of another line", () => {
     const r = vote([["ZÁKLADNÁ ŠKOLA, VZOROVÁ CESTA 1", 90], ["| ZASA doom", 28]]);
     expect(r).toEqual({ text: "ZÁKLADNÁ ŠKOLA, VZOROVÁ CESTA 1", used: 1 });
+  });
+});
+
+describe("name vote marks", () => {
+  it("reads a dollar sign as Š", () => {
+    // A typewriter-like font: "ŠKOLSKÁ JEDÁLEŇ PRI MŠ" read "$KOLSKA ... M$".
+    const v = consensus([
+      { text: "$KOLSKA JEDÁLEŇ PRI M$", confidence: 92 },
+      { text: "ŠKOLSKA JEDÁLEŇ PRI M$", confidence: 80 },
+    ]);
+    expect(v?.text).toBe("ŠKOLSKA JEDÁLEŇ PRI MŠ");
   });
 });
 

@@ -83,6 +83,23 @@ export async function ocrDigits(
   return { text: data.text.replace(/\s/g, ""), confidence: data.confidence };
 }
 
+/**
+ * The digits printed under a poukaz code, as one string. Block mode: on two
+ * blurred photos line mode returned nothing and sparse mode split the line,
+ * while block mode read all 48 digits.
+ */
+export async function ocrCodeDigits(canvas: HTMLCanvasElement, rect: BBox): Promise<string> {
+  const w = await getOcrWorker();
+  const left = Math.max(0, Math.round(rect.x0));
+  const top = Math.max(0, Math.round(rect.y0));
+  const width = Math.min(canvas.width - left, Math.round(rect.x1 - rect.x0));
+  const height = Math.min(canvas.height - top, Math.round(rect.y1 - rect.y0));
+  if (width < 8 || height < 8) return "";
+  await w.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK, tessedit_char_whitelist: "0123456789", user_defined_dpi: "300" });
+  const { data } = await w.recognize(canvas, { rectangle: { left, top, width, height } });
+  return data.text.replace(/\s/g, "");
+}
+
 /** Text height a line is scaled to for `ocrLine`, in px. */
 const LINE_TEXT_HEIGHT = 48;
 
@@ -362,9 +379,10 @@ export async function ocrGridDigits(
 const LETTERS = "AÁÄBCČDĎEÉFGHIÍJKLĹĽMNŇOÓÔPQRŔSŠTŤUÚVWXYÝZŽaáäbcčdďeéfghiíjklĺľmnňoóôpqrŕsštťuúvwxyýzž0123456789";
 /**
  * Letters whose small form is a smaller copy of the capital: alone, only the height tells them
- * apart. U and u differ by u's tail only, and a clean U read as u at 90.
+ * apart. U and u differ by u's tail only, and a clean U read as u at 90. Í read as í: an i
+ * is a short stem with its dot, an I a full bar.
  */
-const SAME_SHAPE = new Set([..."cčoóôsšuúvwxzž"]);
+const SAME_SHAPE = new Set([..."cčiíoóôsšuúvwxzž"]);
 const MIN_CHAR_CONFIDENCE = 50;
 
 async function readLetter(w: Worker, tile: HTMLCanvasElement): Promise<{ ch: string; confidence: number }> {

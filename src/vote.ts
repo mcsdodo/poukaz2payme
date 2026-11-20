@@ -163,7 +163,8 @@ function winner(votes: Map<string, number>, edge = false): string {
  * common choice, each reading weighted by its confidence.
  */
 export function consensus(readings: Reading[]): Consensus | undefined {
-  const rs = readings.map((r) => ({ ...r, text: r.text.replace(JUNK, " ").replace(/\s+/g, " ").trim() })).filter((r) => r.text);
+  // A name holds no dollar sign: it is OCR's Š (a typewriter-like font read "M$" for MŠ).
+  const rs = readings.map((r) => ({ ...r, text: r.text.replace(JUNK, " ").replace(/\$/g, "Š").replace(/\s+/g, " ").trim() })).filter((r) => r.text);
   if (!rs.length) return undefined;
   const middle = rs
     .map((r) => ({ r, total: rs.reduce((s, o) => s + normalized(r.text, o.text), 0) }))

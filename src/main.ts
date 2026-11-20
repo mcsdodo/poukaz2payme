@@ -12,12 +12,12 @@ import { extractFields, type BBox, type Extracted, type ExtractResult } from "./
 import { bankName, formatIban, isValidIban, normalizeIban, splitSkIban, isValidLegacyPart } from "./iban";
 import { flattenLight } from "./light";
 import { locateBarcode } from "./locate";
-import { getOcrWorker, ocrBoxedDigits, ocrDigits, ocrGridDigits, ocrGridText, ocrLine, ocrPage, setOcrProgress } from "./ocr";
+import { getOcrWorker, ocrBoxedDigits, ocrCodeDigits, ocrDigits, ocrGridDigits, ocrGridText, ocrLine, ocrPage, setOcrProgress } from "./ocr";
 import { FIELDS, gridCells } from "./layout";
 import { consensus, type Reading } from "./vote";
 import { buildBySquare, buildPaymeLink, formatAmount, parseAmount, PaymeError } from "./payme";
 import { completeKs, isKnownKsClass } from "./ks";
-import { parsePoukazBarcode, productAdvice, type PoukazBarcode } from "./poukaz";
+import { parsePoukazBarcode, poukazFromDigitLine, productAdvice, type PoukazBarcode } from "./poukaz";
 
 declare const __BUILD_TIME__: string;
 declare const __APP_VERSION__: string;
@@ -265,6 +265,106 @@ function findCode(canvas: HTMLCanvasElement): Point[] | undefined {
   ];
 }
 
+/** The located code's width is scaled to this for the rescue decode. */
+const RESCUE_CODE_WIDTH = 1700;
+
+/**
+ * A poukaz code located by its look (findCode) but not decoded. Two photos of
+ * the same form: one dark and taken from a distance, with motion blur, the
+ * other soft at 3200x1800. On the second, zxing read the code cut out with a
+ * margin, contrast stretched, sharpened (unsharp mask, radius 3 at the
+ * photo's scale, amount 2) and doubled; it read neither photo whole. On the
+ * first the bars stayed too smeared, but the digits printed under them read
+ * exactly in Tesseract's block mode. Those count only when 48 or 50 of them
+ * parse as a poukaz code with a valid IBAN (mod 97), so a misread digit gives
+ * nothing, never a wrong IBAN. The rest of the code counts only when its
+ * mod-11 check digit holds too: once a misread 6 in the amount digits passed
+ * the IBAN check and gave 6000,00.
+ */
+async function rescueCode(canvas: HTMLCanvasElement, quad: Point[]): Promise<{ barcode?: PoukazBarcode; tries: string[] }> {
+  const tries: string[] = [];
+  const xs = quad.map((p) => p.x);
+  const ys = quad.map((p) => p.y);
+  const w = Math.max(...xs) - Math.min(...xs);
+  const x0 = Math.max(0, Math.floor(Math.min(...xs) - w * 0.15));
+  const x1 = Math.min(canvas.width, Math.ceil(Math.max(...xs) + w * 0.15));
+  const y0 = Math.max(0, Math.floor(Math.min(...ys) - w * 0.12));
+  const y1 = Math.min(canvas.height, Math.ceil(Math.max(...ys) + w * 0.12));
+  if (x1 - x0 < 16 || y1 - y0 < 16) return { tries };
+  const scale = Math.max(1, RESCUE_CODE_WIDTH / w);
+  const c = document.createElement("canvas");
+  c.width = Math.round((x1 - x0) * scale);
+  c.height = Math.round((y1 - y0) * scale);
+  const ctx = c.getContext("2d", { willReadFrequently: true })!;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(canvas, x0, y0, x1 - x0, y1 - y0, 0, 0, c.width, c.height);
+  const img = ctx.getImageData(0, 0, c.width, c.height);
+  sharpenGray(img, Math.max(1, Math.round(3 * scale * 0.75)), 2);
+  ctx.putImageData(img, 0, 0);
+  const hits = (await decodeCanvas(c)).filter(isPoukazHit);
+  if (hits.length) {
+    tries.push(`decoded at ${scale.toFixed(2)}x, sharpened: ${hits[0].text}`);
+    release(c);
+    return { barcode: parsePoukazBarcode(hits[0].text) ?? undefined, tries };
+  }
+  tries.push(`no decode at ${scale.toFixed(2)}x, sharpened`);
+  // The digits under the bars: from the code's foot to a tenth of its width below.
+  const bottom = Math.max(...ys);
+  const strip: BBox = {
+    x0: (Math.min(...xs) - w * 0.08 - x0) * scale,
+    y0: (bottom - w * 0.02 - y0) * scale,
+    x1: (Math.max(...xs) + w * 0.08 - x0) * scale,
+    y1: (Math.min(y1, bottom + w * 0.09) - y0) * scale,
+  };
+  const text = await ocrCodeDigits(c, strip);
+  release(c);
+  tries.push(`digits: ${text}`);
+  const barcode = poukazFromDigitLine(text);
+  if (barcode && barcode.mod11 === "n/a") tries.push("only the IBAN passed its check");
+  return { barcode, tries };
+}
+
+/** Grayscale, contrast stretched (1% each end), then an unsharp mask of the given box radius. */
+function sharpenGray(img: ImageData, radius: number, amount: number): void {
+  const { data: d, width: w, height: h } = img;
+  const g = new Float32Array(w * h);
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < w * h; i++) {
+    const v = (d[i * 4] * 299 + d[i * 4 + 1] * 587 + d[i * 4 + 2] * 114) / 1000;
+    g[i] = v;
+    hist[v | 0]++;
+  }
+  let lo = 0;
+  let hi = 255;
+  for (let acc = 0; lo < 255 && (acc += hist[lo]) < w * h * 0.01; lo++);
+  for (let acc = 0; hi > 0 && (acc += hist[hi]) < w * h * 0.01; hi--);
+  const span = Math.max(1, hi - lo);
+  for (let i = 0; i < w * h; i++) g[i] = Math.max(0, Math.min(255, ((g[i] - lo) * 255) / span));
+  // Box blur, rows then columns, with running sums.
+  const tmp = new Float32Array(w * h);
+  const blur = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    let sum = 0;
+    for (let x = -radius; x <= radius; x++) sum += g[y * w + Math.min(w - 1, Math.max(0, x))];
+    for (let x = 0; x < w; x++) {
+      tmp[y * w + x] = sum / (radius * 2 + 1);
+      sum += g[y * w + Math.min(w - 1, x + radius + 1)] - g[y * w + Math.max(0, x - radius)];
+    }
+  }
+  for (let x = 0; x < w; x++) {
+    let sum = 0;
+    for (let y = -radius; y <= radius; y++) sum += tmp[Math.min(h - 1, Math.max(0, y)) * w + x];
+    for (let y = 0; y < h; y++) {
+      blur[y * w + x] = sum / (radius * 2 + 1);
+      sum += tmp[Math.min(h - 1, y + radius + 1) * w + x] - tmp[Math.max(0, y - radius) * w + x];
+    }
+  }
+  for (let i = 0; i < w * h; i++) {
+    const v = Math.max(0, Math.min(255, g[i] + amount * (g[i] - blur[i])));
+    d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = v;
+  }
+}
+
 /** Smallest tilt worth a resample. 0.2 degrees moves a row 7 px across a 2000 px photo. */
 const MIN_SKEW = 0.2;
 
@@ -405,6 +505,16 @@ async function processImage(input: HTMLCanvasElement, extraRotation: number, cap
     // read, and the IBAN comes from the digits under the bars (barcodeFromOcrText).
     const located = pk ? undefined : findCode(canvas);
     if (located) diag.barcodeLocated = located.map((p) => ({ x: Math.round(p.x), y: Math.round(p.y) }));
+    // Found by its look but not decoded: the code alone, cleaned up, often decodes, and the
+    // digits printed under it are an independent copy (`rescueCode`).
+    // The rescue adds the code's data only; the form is still cut out by the located box,
+    // as without it (cut by the rescued corners, one soft photo lost its amount to page OCR).
+    let rescued: PoukazBarcode | null = null;
+    if (located) {
+      const r = await rescueCode(canvas, located);
+      diag.barcodeRescue = r.tries;
+      rescued = r.barcode ?? null;
+    }
     let rotation = extraRotation;
     let codeBox: BBox | undefined;
     const codeQuad = pk?.position ?? located;
@@ -441,7 +551,7 @@ async function processImage(input: HTMLCanvasElement, extraRotation: number, cap
     state.rotation = rotation;
     diag.rotation = rotation;
 
-    let barcode: PoukazBarcode | null = pk ? parsePoukazBarcode(pk.text) : null;
+    let barcode: PoukazBarcode | null = pk ? parsePoukazBarcode(pk.text) : rescued;
     handleOtherCodes(hits);
 
     // 3. OCR of the printed fields.
@@ -604,7 +714,8 @@ async function voteName(ocrCanvas: HTMLCanvasElement, ex: ExtractResult, diag: R
   const voted = consensus(readings);
   diag.nameVote = { readings: readings.map((r) => `${r.text} (${Math.round(r.confidence)})`), result: voted?.text, used: voted?.used };
   // The page's own reading stands when the others were of other lines.
-  if (voted && voted.used >= 2) ex.name = { ...(ex.name ?? copies[0]), value: voted.text.replace(/[\s,;.]+$/, "") };
+  // A name starts with a letter or a digit: a box mark before it read "- SPOJENÁ".
+  if (voted && voted.used >= 2) ex.name = { ...(ex.name ?? copies[0]), value: voted.text.replace(/[\s,;.]+$/, "").replace(/^[^\p{L}\p{N}]+/u, "") };
 }
 
 /** The digit pass under the SUMA label, when there are no amount words to check it against. */
@@ -669,7 +780,9 @@ async function readFixedFields(colorCanvas: HTMLCanvasElement, ex: ExtractResult
   // With one box of the 14 unreadable the row reports 0; each digit read passed 70 alone.
   const conf = row.confidence || 70;
   const part = (from: number, to: number) => (row.boxes ?? []).slice(from, to).filter((b) => b !== undefined);
-  const vsBoxes = part(0, vsCells.length);
+  // VS prints right-aligned like the euros: ink left of an empty box is no digit of it (an
+  // unreadable speck in the first box emptied a clean 112606).
+  const vsBoxes = trailingRun((row.boxes ?? []).slice(0, vsCells.length));
   const ksBoxes = part(vsCells.length, vsCells.length + ksCells.length);
   const vsText = vsBoxes.includes(null) ? "" : vsBoxes.join("");
   if (vsText.length >= 2) {
@@ -760,7 +873,11 @@ async function readFixedFields(colorCanvas: HTMLCanvasElement, ex: ExtractResult
   const message = rows.map((r) => r.text).join("").replace(/\s+/g, " ").trim();
   // Mostly unreadable boxes ("A ??-k A?NT") are noise, not a message to check.
   const unreadable = (message.match(/\?/g) ?? []).length;
-  if ((message.match(/\p{L}/gu) ?? []).length >= 2 && unreadable <= Math.max(1, message.length * 0.1)) {
+  // A message is mostly letters and digits. One printed over the label above its boxes
+  // (STRAVNÉ on SPRÁVA PRE ADRESÁTA) read "-?-VÉ č-": noise, better left empty.
+  const signs = message.replace(/\s/g, "");
+  const wordy = (signs.match(/[\p{L}\p{N}]/gu) ?? []).length >= signs.length * 0.7;
+  if ((message.match(/\p{L}/gu) ?? []).length >= 2 && wordy && unreadable <= Math.max(1, message.length * 0.1)) {
     const area = union(FIELDS.message.flatMap((g) => gridCells(fit, g)));
     ex.message = { value: message, confidence: Math.min(...rows.map((r) => r.confidence)), bbox: area };
   }
