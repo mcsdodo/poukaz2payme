@@ -100,6 +100,16 @@ caused most of the camera trouble. Two things learnt from it still matter for ph
   0.2 right) lies most inside the photo wins (`formShareInFrame` in [deskew.ts](src/deskew.ts)),
   on a tie the wider code. `diag.formInFrame` lists the shares.
 
+## Testing on real photos
+
+`npm run test:photos` ([TESTING.md](TESTING.md), [scripts/test-photos.mjs](scripts/test-photos.mjs))
+reads the photos in `../poukaz2payme-photos` (a private repository; attach it to cloud
+sessions) and compares each field with its `truth.json`. Run it after any change to
+recognition, and compare with the run before: on 11 photos it read 69 of 77 fields, and no
+payment field may be wrong (the run fails on one). The photos, `truth.json` and the
+diagnostics in `test-results/` are personal data and are never committed here; quote a
+misread in this repository only as far as a rule needs it.
+
 ## Recognition: what is solid and what is a guess
 
 - **Deskew ([deskew.ts](src/deskew.ts)):** the photo is turned by the barcode corners in quarter

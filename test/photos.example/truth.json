@@ -1,0 +1,17 @@
+{
+  "photos": [
+    {
+      "file": "01-kitchen-table.jpg",
+      "about": "What makes this photo hard: a second form in the frame, a shadow, taken at an angle.",
+      "expect": {
+        "iban": "SK31 1200 0000 1987 4263 7541",
+        "amount": "37,50",
+        "vs": "123456",
+        "ks": "0308",
+        "ss": "",
+        "name": "MATERSKÁ ŠKOLA, HLAVNÁ 1",
+        "message": "MŠ-Trieda 2,JÁN NOVÁK"
+      }
+    }
+  ]
+}
