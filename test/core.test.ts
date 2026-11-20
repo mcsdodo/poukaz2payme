@@ -9,7 +9,7 @@ import { accented } from "../src/text";
 import { flattenLight } from "../src/light";
 import { consensus } from "../src/vote";
 import { fitLayout } from "../src/layout";
-import { rotatePoint, rotatedSize, zoneSkew } from "../src/deskew";
+import { formShareInFrame, rotatePoint, rotatedSize, zoneSkew } from "../src/deskew";
 import { completeKs, isKnownKsClass } from "../src/ks";
 import { euroWords, parseEuroWords } from "../src/amountwords";
 import realLines from "./fixtures/poukaz-real-form.lines.json";
@@ -518,6 +518,100 @@ describe("gridTiles when the fit is off by more than half a box", () => {
   it("keeps every character in the grid, box for box", () => {
     expect(tiles.every(Boolean)).toBe(true);
     expect(tiles.map((t) => Math.round(t!.center))).toEqual(ink.map((r) => (r[0] + r[2]) / 2 - 0.5 + 0.5));
+  });
+});
+
+describe("gridTiles when the fit sits a third of a box low", () => {
+  // The amount: 8 boxes 40 px wide, the band at y 20-80, but the digits print at y 15-45
+  // (photo taken at an angle). Under them, inside the band, the SLOVOM label: six small
+  // letters in the first boxes. Counted as the row, they outnumbered the digits and moved
+  // the grid a box sideways (2,09 for 20,90).
+  const cells = Array.from({ length: 8 }, (_, i) => ({ x0: 20 + i * 40, y0: 20, x1: 60 + i * 40, y1: 80 }));
+  const digit = (box: number) => [20 + box * 40 + 13, 15, 20 + box * 40 + 27, 45] as [number, number, number, number];
+  const label = (i: number) => [24 + i * 13, 60, 33 + i * 13, 74] as [number, number, number, number];
+  const img = page(400, 100, [digit(4), digit(5), digit(6), digit(7), ...[0, 1, 2, 3, 4, 5].map(label)]);
+  const { tiles } = gridTiles(img, cells, 0.5, undefined, false);
+  it("moves the band onto the digits and leaves the label out", () => {
+    expect(tiles.map((t) => (t ? "x" : "_")).join("")).toBe("____xxxx");
+    expect(tiles[4]!.mainHeight).toBe(30);
+  });
+});
+
+describe("gridTiles marks", () => {
+  const cells = Array.from({ length: 6 }, (_, i) => ({ x0: 20 + i * 40, y0: 20, x1: 60 + i * 40, y1: 80 }));
+  const box = (i: number) => 20 + i * 40;
+  it("leaves a speck at a digit's foot out of a digit grid", () => {
+    // Seen: "0." in a cent box read as nothing.
+    const img = page(300, 100, [[box(1) + 13, 36, box(1) + 27, 66], [box(1) + 31, 61, box(1) + 35, 66], [box(2) + 13, 36, box(2) + 27, 66]]);
+    expect(gridTiles(img, cells, 0.5, undefined, false).tiles[1]!.parts).toBe(1);
+    expect(gridTiles(img, cells, 0.5).tiles[1]!.parts).toBe(2);
+  });
+  it("keeps the apostrophe of ľ out of the tile and marks it", () => {
+    // "Motýľ": a bar with a small upright mark beside its top.
+    const img = page(300, 100, [
+      [box(0) + 13, 36, box(0) + 27, 66],
+      [box(1) + 18, 36, box(1) + 22, 66],
+      [box(1) + 25, 36, box(1) + 28, 44],
+      [box(2) + 13, 46, box(2) + 27, 66],
+      [box(3) + 13, 36, box(3) + 27, 66],
+    ]);
+    const t = gridTiles(img, cells, 0.5).tiles[1]!;
+    expect(t.apostrophe).toBe(true);
+    expect(t.parts).toBe(1);
+    expect(gridTiles(img, cells, 0.5).tiles[0]!.apostrophe).toBe(false);
+  });
+});
+
+describe("gridTiles on a slanted rule", () => {
+  // The rule under the message steps a pixel up or down every 30 px, so no pixel row holds a
+  // run as long as the erase limit (48 px); its pieces stayed on the letters standing on it.
+  const cells = Array.from({ length: 10 }, (_, i) => ({ x0: 20 + i * 40, y0: 20, x1: 60 + i * 40, y1: 80 }));
+  const rule = Array.from({ length: 15 }, (_, i) => [i * 30, 66 + (i % 2), i * 30 + 30, 68 + (i % 2)] as [number, number, number, number]);
+  const letter = (box: number) => [20 + box * 40 + 13, 40, 20 + box * 40 + 27, 66] as [number, number, number, number];
+  const img = page(450, 100, [...rule, letter(0), letter(1), letter(4), letter(8)]);
+  const { tiles } = gridTiles(img, cells, 0.5);
+  it("erases the rule and keeps the letters whole", () => {
+    expect(tiles.map((t) => (t ? "x" : "_")).join("")).toBe("xx__x___x_");
+    for (const t of tiles.filter(Boolean)) expect(t!.mainWidth).toBe(14);
+  });
+});
+
+describe("gridTiles letter tails and labels", () => {
+  const cells = Array.from({ length: 8 }, (_, i) => ({ x0: 20 + i * 40, y0: 20, x1: 60 + i * 40, y1: 80 }));
+  const at = (box: number) => 20 + box * 40 + 13;
+  it("cuts the column's pale border off a letter it crosses", () => {
+    // An O 26 px tall with a thin line through it reaching 12 px above and below: 50 px,
+    // shorter than a rule the eraser takes, and read as Ó.
+    const img = page(400, 100, [
+      [at(0), 40, at(0) + 14, 66],
+      [at(1), 40, at(1) + 14, 66],
+      [at(2), 40, at(2) + 14, 66],
+      [at(2) + 6, 28, at(2) + 9, 78],
+    ]);
+    expect(gridTiles(img, cells, 0.5).tiles[2]!.mainHeight).toBe(26);
+  });
+  it("leaves out a label letter under the row", () => {
+    // ČÍTACIA ZÓNA under a message row printed low.
+    const img = page(400, 100, [[at(0), 30, at(0) + 14, 56], [at(1), 30, at(1) + 14, 56], [at(2), 30, at(2) + 14, 56], [at(6), 60, at(6) + 10, 76]]);
+    expect(gridTiles(img, cells, 0.5).tiles.map((t) => (t ? "x" : "_")).join("")).toBe("xxx_____");
+  });
+});
+
+describe("form in the frame", () => {
+  // A 3000x4000 photo; the code is 870 px wide. The form reaches a code width above it.
+  const code = (y: number) => [
+    { x: 710, y },
+    { x: 1580, y },
+    { x: 1580, y: y + 30 },
+    { x: 710, y: y + 30 },
+  ];
+  it("tells the form in the photo from one cut off at its top edge", () => {
+    expect(formShareInFrame(code(1500), 2400, 3200, 0)).toBeGreaterThan(0.95);
+    expect(formShareInFrame(code(48), 2400, 3200, 0)).toBeLessThan(0.1);
+  });
+  it("measures a code read upside down in the turned photo", () => {
+    const flipped = code(1500).map((p) => ({ x: 2400 - p.x, y: 3200 - p.y }));
+    expect(formShareInFrame(flipped, 2400, 3200, 180)).toBeGreaterThan(0.95);
   });
 });
 

@@ -84,6 +84,11 @@ caused most of the camera trouble. Two things learnt from it still matter for ph
   (`decodePoukaz`): at 460 px across the code zxing never read it, at 1.5x it did.
 - `diag.capture` is `file`, or the blank-retry note. Chrome on Android uses its native
   barcode detector first, then zxing.
+- **Two forms in one photo:** a photo of one form often shows the edge of another with its
+  code whole and its fields cut off, and zxing listed that code first: the scan read only
+  the IBAN. Of several poukaz codes the one whose form (a code width above it, 0.85 left,
+  0.2 right) lies most inside the photo wins (`formShareInFrame` in [deskew.ts](src/deskew.ts)),
+  on a tie the wider code. `diag.formInFrame` lists the shares.
 
 ## Recognition: what is solid and what is a guess
 
@@ -119,23 +124,63 @@ caused most of the camera trouble. Two things learnt from it still matter for ph
   the grid to where the printed characters are (median offset of the letters from the box
   middles), then gives every shape to the box its middle falls in, which keeps an accent
   with its letter and leaves the next field's digits (KS's 0) out. What made the message read:
+  - **The band moves onto the characters (`rowShift`).** On a photo taken at an angle the fit
+    sat a third of a box low: the amount's band took in the SLOVOM label, whose six small
+    letters outnumbered the four digits and moved the grid a box sideways (`2,09` for
+    20,90, with no warning), and KS digits printed high were cut at the band's top. The
+    row's middle is the ink-weighted middle of the shapes at least a third of a box tall
+    within half a box of the band (box characters print at about half the box, labels at a
+    quarter); the band moves by it when that is over a tenth of a box, at most 0.4. The
+    crop reaches half a box above and below for it. The half-box limit keeps an empty SS
+    grid off the reference number under it.
   - Rules: a letter standing on a rule or crossed by the column's border merged with it and
     was dropped as a line (A, R, H). Colour does not separate them after `flattenLight`
     (the rule was as grey as the print on one photo), shape does: ink runs longer than 1.2
     boxes across or 0.9 down, columns or rows mostly ink, and thin bars much taller than
     the row's letters are erased, and everything outside the row's band is cut off.
+    Across, a run follows the ink a pixel up or down and over gaps of 2 px: a slightly
+    slanted rule broke into pieces too short to erase, and they stayed on the letters
+    standing on it (`B___`, an underlined U). Only the pieces of a row's own ink at least
+    half the limit long go, so a letter's foot touching the rule stays. Down, runs stay
+    strict: tolerant, a faint box separator took the stems of B and P with it.
+  - The column's border is green and pale, so it breaks into short runs and survives where
+    it crosses a letter (an O 82 px tall in a row of 47 px capitals, read Ó). A shape over
+    1.3 times the row's height loses thin tails (a few px wide, at least a tenth of a box
+    long) at its top and bottom, if a letter's height is left (`trimTails`). A shape that
+    starts below the middle of the row's letters is the label under the row (Č of ČÍTACIA
+    ZÓNA under a message printed low).
   - Small marks count only where print puts them: an accent above a letter (7x8 px), a
-    hyphen as a flat dash, a comma or full stop at the letters' foot, and punctuation only
-    next to a letter. A letter is at least 0.6 of the row's usual height.
+    hyphen as a flat dash, a comma or full stop at the letters' foot in the box after a
+    letter, and punctuation only next to a letter. A letter is at least 0.6 of the row's
+    usual height. The caron of ľ, ť, ď and Ľ prints as an apostrophe beside the letter's
+    top: it is kept out of the tile and added after (`isApostrophe`; `Motýľ` read `Motyl`).
+    Ť and Ď print theirs above, so a speck beside a T is no caron. Digit grids keep no
+    marks: a speck at a 0's foot joined it as `0.` and the box read nothing.
   - Each letter is read alone (`ocrGridText` in [ocr.ts](src/ocr.ts)). Alone, Tesseract
     cannot tell `c o s v w x z` from their capitals, so the height decides; it returns
     nothing for a bare bar, so a one-shape bar is `l` or `I` by its neighbours (`Sliepky`,
     `MARTIN`); it reads `é` as `e`, so a mark above the letter adds an acute to a vowel and a
     caron to a consonant (`accented` in [text.ts](src/text.ts)). The rows join without a
-    space (`M` + `ARTIN`); an empty box is a space.
+    space (`M` + `ARTIN`); an empty box is a space. `U`/`u` also go by height (a clean U
+    read `u` at 90), a `p` standing on the line is `P`, and a `0` between letters is `O`.
+  - **Tesseract reads one letter differently at each size.** At the tile's own size (capitals
+    about 47 px) it gave `K` for k and nothing for P and E; at 0.7 it read them, at 0.5 a P
+    came out D, at 0.4 `p`. On 53 letters of three photos: full size 44 right, 0.7 48,
+    0.5 48, 0.4 49. So `readLetter` reads at 0.7 and 0.5, and at 0.4 when those two differ,
+    and takes the letter most sizes give. A digit no page mode reads (a clean 0 got nothing
+    in all three) is read again at half the size, where it read 0 at 95 (`readCell`).
+  - **The message's second row runs on past its 12 boxes.** The first row breaks after 12
+    characters and the second prints the rest, over the column's border (`UZANA HUDECOVÁ`,
+    14), so it is read 6 boxes further. The extra boxes count only when the 12th box holds
+    a character and the 13th a letter, and only while the letters run on unbroken; the
+    border meeting the rule under the row read `J.` there. A row that does not run on is
+    read again in its own 12 boxes: the wider crop moves the ink threshold, and a B on the
+    rule read R.
   - Digits use the same grid at three thresholds, voted per box (`ocrGridDigits`). Where
     the grid read part of a field (`445?13`), the label-based fallback must fit that
-    pattern: on a 970 px frame it read `4456130`.
+    pattern: on a 970 px frame it read `4456130`. The euros are the run of boxes that ends
+    at the last euro box: a stub of the field's left border, three empty boxes left of the
+    `=`, read as an unreadable box and emptied the amount.
   - A grid one box out leaves its stray character within a box of its end, so only ink that
     close counts as outside: K. SPRAC.'s `3` stands 1.4 boxes right of the amount's cents.
   - **The grid can land a whole box out.** The nudge picks the nearest box, so a fit off by
@@ -158,6 +203,12 @@ caused most of the camera trouble. Two things learnt from it still matter for ph
   - On both photos at all sizes the message reads `MŠ-Sliepky,MARTIN HUDEC`, except at
     1300 px (two accents lost, the marks are a few pixels). With the form at 970 px it is
     garbled, and VS is left empty rather than wrong.
+  - Three more photos (3000x4000, two forms in each, one held down by fingers over the
+    code's digits, one at an angle) read every IBAN, amount, VS, KS and SS at full size, at
+    1600 px and turned a quarter or upside down; at 1200 px one VS is left empty. Two of the
+    three messages read exactly; on the third the second row prints on the rule and its E
+    loses its foot (`HUDFC`). Test copies of a photo must apply its EXIF orientation first
+    (these are stored 4000x3000 with orientation 6): resized without it, every copy failed.
 - **Solid:** IBAN from the Code 128C barcode, accepted when it passes mod-97. The payme link
   matches the example in the SBA standard (unit test). PAY by square round-trips through
   `bysquare` decode (unit test).
