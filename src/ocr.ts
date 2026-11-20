@@ -516,7 +516,7 @@ export async function ocrGridText(canvas: HTMLCanvasElement, cells: BBox[]): Pro
     if (c.ch === "I") c.ch = "ľ";
     else if ("lLtd".includes(c.ch)) c.ch = accented(c.ch, 1);
   }
-  // A 0 between two letters is an O: the message is read with digits allowed ("HUDEC0VÁ").
+  // A 0 between two letters is an O: the message is read with digits allowed ("NOVÁK0VÁ").
   for (let i = 1; i < chars.length - 1; i++) {
     if (chars[i].ch !== "0" || !isLetter(chars[i - 1].ch) || !isLetter(chars[i + 1].ch)) continue;
     chars[i].ch = chars[i].lower ? "o" : "O";

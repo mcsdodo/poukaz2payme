@@ -88,7 +88,7 @@ const GROUPS: Group[] = [
 
 /**
  * "SPRÁVA PRE ADRESÁTA" boxes. The message is printed over the label, so OCR
- * rarely reads the label, but it reads the message (on the real form "OBEDY").
+ * rarely reads the label, but it reads the message (on one real form).
  */
 const MESSAGE_AREA = b(640, 962, 1200, 1105);
 

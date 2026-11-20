@@ -120,16 +120,18 @@ describe("poukaz barcode", () => {
 });
 
 describe("poukaz code from the digits under the bars", () => {
-  // Read by OCR from two blurred photos whose bars zxing could not decode.
-  const code = "380001391100000000294101671600000000003000000006";
+  // OCR of the digits under the bars of two blurred photos: the code, with stray digits
+  // in front. The code here is fake, laid out as the real one (product 38, zeros for VS
+  // and amount).
+  const code = withCheck("38" + "00" + "01" + "39" + "1100" + "000000" + "2941016716" + "0000000000" + "3" + "00000000");
   it("finds the code among other digits", () => {
     const p = poukazFromDigitLine("0009039990990" + code);
     expect(p?.iban).toBe("SK3911000000002941016716");
     expect(p?.mod11).toBe("ok");
   });
   it("keeps only the IBAN when a misread digit breaks the check digit", () => {
-    // Seen: 3006000006 for 3000000006, which gave an amount of 6000,00.
-    const p = poukazFromDigitLine(code.replace("3000000006", "3006000006"));
+    // Seen: a 6 misread among the amount's zeros, which gave an amount of 6000,00.
+    const p = poukazFromDigitLine(code.slice(0, 43) + "6" + code.slice(44));
     expect(p?.iban).toBe("SK3911000000002941016716");
     expect(p?.amountCents).toBeUndefined();
     expect(p?.mod11).toBe("n/a");
@@ -352,15 +354,15 @@ describe("OCR extraction rules", () => {
     expect(r.centsBelowLabel?.value).toBe("50");
   });
   it("does not take half of a number cut by a form rule", () => {
-    // VS 445613 printed on the rule between the stub's VS and SS rows: two short fragments.
+    // A VS printed on the rule between the stub's VS and SS rows: two short fragments.
     const label = line("VARIABILNÝ SYMBOL", 60, 732, 223, 746);
     expect(extractFields([label, line("453042", 281, 735, 370, 744)]).vs?.value).toBe("");
-    expect(extractFields([label, line("445613", 281, 728, 370, 748)]).vs?.value).toBe("445613");
+    expect(extractFields([label, line("445577", 281, 728, 370, 748)]).vs?.value).toBe("445577");
   });
   it("never reads SS from the stub: its boxes are the source", () => {
     const r = extractFields([
       line("ŠPECIFICKÝ SYMBOL", 60, 762, 223, 776),
-      line("445613", 281, 756, 370, 776),
+      line("445577", 281, 756, 370, 776),
       line("SK39 1100 0000 0029 4101 6716", 900, 600, 1900, 630),
     ]);
     expect(r.ss?.value ?? "").toBe("");
@@ -448,7 +450,8 @@ describe("segmentCells", () => {
 describe("name vote", () => {
   const vote = (rs: [string, number][]) => consensus(rs.map(([text, confidence]) => ({ text, confidence })));
   it("fixes a letter no single reading got right", () => {
-    // Seen: "ZF KLADNÁ" on the stub, "ŠZÁKLADNÁ" and '"ZÁKLADNÁ' in the middle copy.
+    // Seen: the first word split with a wrong letter on the stub, a letter added in front
+    // of it and a quote before it in the middle copy.
     const r = vote([
       ["ZF KLADNÁ ŠKOLA, VZOROVÁ CESTA 1", 90],
       ["[5 KLADNA ŠKOLA, VZOROVA CESTA 1,", 81],
@@ -470,7 +473,7 @@ describe("name vote", () => {
     expect(vote([["SKOLA", 90], ["SKOLA", 90], ["ŠKOLA", 60]])?.text).toBe("SKOLA");
   });
   it("does not cut the name short when some readings stop early", () => {
-    // Seen: the stub line split by OCR, and its crop read only to "VZO".
+    // Seen: the stub line split by OCR, and its crop read only a word and a half.
     const r = vote([
       ["ZÁKLADNÁ ŠKOLA, VZOR!", 78],
       ["ZÁKLADNÁ ŠKOLA, VZO", 94],
@@ -495,12 +498,12 @@ describe("name vote", () => {
 
 describe("name vote marks", () => {
   it("reads a dollar sign as Š", () => {
-    // A typewriter-like font: "ŠKOLSKÝ KLUB PRI ZŠ" read "$KOLSKY ... Z$".
+    // A typewriter-like font read its Š as "$".
     const v = consensus([
-      { text: "$KOLSKY KLUB PRI Z$", confidence: 92 },
-      { text: "ŠKOLSKY KLUB PRI Z$", confidence: 80 },
+      { text: "$KOLSKÝ KLUB PRI Z$", confidence: 92 },
+      { text: "ŠKOLSKÝ KLUB PRI Z$", confidence: 80 },
     ]);
-    expect(v?.text).toBe("ŠKOLSKY KLUB PRI ZŠ");
+    expect(v?.text).toBe("ŠKOLSKÝ KLUB PRI ZŠ");
   });
 });
 
@@ -660,14 +663,14 @@ describe("accents from marks", () => {
 describe("voteCells", () => {
   const reading = (s: string, at = 0) => ({ cells: [...s].map((ch, i) => ({ center: at + i * 50, inkHeight: 40, ch: ch === "?" ? null : ch })) });
   it("takes the digit most thresholds read", () => {
-    // Seen: 0.4 read 445513 at 88 for a printed 445613; 0.5 and 0.6 read the 6.
-    expect(voteCells([reading("445613"), reading("445513"), reading("445613")]).join("")).toBe("445613");
+    // Seen: 0.4 read a printed 6 as a 5 at 88; 0.5 and 0.6 read the 6.
+    expect(voteCells([reading("445677"), reading("445577"), reading("445677")]).join("")).toBe("445677");
   });
   it("leaves a place unreadable when two thresholds disagree", () => {
-    expect(voteCells([reading("445613"), reading("445513")])).toEqual(["1", "1", "2", null, "1", "3"]);
+    expect(voteCells([reading("445677"), reading("445577")])).toEqual(["4", "4", "5", null, "7", "7"]);
   });
   it("fills a place one threshold could not read", () => {
-    expect(voteCells([reading("??5613"), reading("445613")]).join("")).toBe("445613");
+    expect(voteCells([reading("??5677"), reading("445677")]).join("")).toBe("445677");
   });
   it("drops a shape only one of three thresholds saw", () => {
     const speck = { cells: [...reading("0179").cells, { center: 260, inkHeight: 40, ch: "1" }] };

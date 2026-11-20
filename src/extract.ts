@@ -294,7 +294,7 @@ function findCentsBelowLabel(lines: OcrLine[]): Extracted | undefined {
 
 /**
  * The line with the pieces OCR split off it on the same row, left to right. One
- * photo gave "ZÁKLADNÁ ŠKOLA, VZOR" and "OVÁ CESTA 1" 2 px apart. A gap under
+ * photo gave the first and the second half of the name 2 px apart. A gap under
  * a quarter of the line height is inside a word; up to one height, a space. The
  * stub ends about 4 heights before the middle column starts, so the two copies
  * never join; a label (the sender's MENO next to the middle copy) ends the line.
@@ -392,8 +392,8 @@ export function extractFields(ocrLines: OcrLine[], code?: BBox): ExtractResult {
         for (const right of linesRightOf(lines, label)) {
           if (isLabelText(right.text)) continue;
           // The stub digits print taller than the label. A shorter line is half of a
-          // number cut by a form rule: one photo had VS 445613 on the line between
-          // the VS and SS rows, read as "453042" and "4450719", the second as an SS.
+          // number cut by a form rule: one photo had its VS on the line between the
+          // VS and SS rows, read as two short fragments, the second taken as an SS.
           if (right.bbox.y1 - right.bbox.y0 < labelH * 0.8) continue;
           value = fits(wholeLineDigits(right.text, symbolMax[key]));
           if (value) {

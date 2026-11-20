@@ -177,7 +177,7 @@ function cropToForm(src: HTMLCanvasElement, quad: Point[]): { canvas: HTMLCanvas
   const code = Math.max(...xs) - Math.min(...xs);
   // The wanted area, which can reach past the photo: a form that fills the frame has its
   // stub at the photo's edge. That part stays white: with it, the stub's name line on one
-  // photo read in full ("ZÁKLADNÁ" where it had read "ZF KLADNÁ").
+  // photo read in full, where it had split the first word with a wrong letter.
   const wx0 = Math.floor(Math.min(...xs) - code * 1.15);
   const wx1 = Math.ceil(Math.max(...xs) + code * 0.45);
   const wy0 = Math.floor(Math.min(...ys) - code * 1.15);
@@ -692,8 +692,8 @@ function handleOtherCodes(hits: BarcodeHit[]): void {
 /**
  * The name is printed twice, on the stub and in the middle ADRESÁT block. Each
  * copy is read by the page OCR and again from its own crop, and the letters
- * are put to a vote (vote.ts). One photo read "ZF KLADNÁ" on the stub and
- * "ŠZÁKLADNÁ" in the middle; neither alone was right.
+ * are put to a vote (vote.ts). On one photo the stub split the first word with a
+ * wrong letter and the middle copy added a letter to it; neither alone was right.
  */
 async function voteName(ocrCanvas: HTMLCanvasElement, ex: ExtractResult, diag: Record<string, unknown>): Promise<void> {
   const copies = (ex.nameCopies ?? []).filter((c) => c.bbox);
@@ -714,7 +714,7 @@ async function voteName(ocrCanvas: HTMLCanvasElement, ex: ExtractResult, diag: R
   const voted = consensus(readings);
   diag.nameVote = { readings: readings.map((r) => `${r.text} (${Math.round(r.confidence)})`), result: voted?.text, used: voted?.used };
   // The page's own reading stands when the others were of other lines.
-  // A name starts with a letter or a digit: a box mark before it read "- ZÁKLADNÁ".
+  // A name starts with a letter or a digit: a box mark before it read as "- ".
   if (voted && voted.used >= 2) ex.name = { ...(ex.name ?? copies[0]), value: voted.text.replace(/[\s,;.]+$/, "").replace(/^[^\p{L}\p{N}]+/u, "") };
 }
 
@@ -762,7 +762,7 @@ async function readFixedFields(colorCanvas: HTMLCanvasElement, ex: ExtractResult
   const tries: Record<string, unknown> = {};
   // Placed by the barcode alone (a photo too soft for its labels), the grids can sit a row
   // off, and the digits are too soft to trust: the SS grid read the reference number below
-  // it, and VS came out 128101 for 445613. VS, KS and SS are left to the user then.
+  // it, and VS came out wrong. VS, KS and SS are left to the user then.
   const rough = !ex.layout?.anchors;
 
   // VS and KS print as one row of 14 boxes: read as one, a grid placed a box out shows as a
@@ -781,7 +781,7 @@ async function readFixedFields(colorCanvas: HTMLCanvasElement, ex: ExtractResult
   const conf = row.confidence || 70;
   const part = (from: number, to: number) => (row.boxes ?? []).slice(from, to).filter((b) => b !== undefined);
   // VS prints right-aligned like the euros: ink left of an empty box is no digit of it (an
-  // unreadable speck in the first box emptied a clean 445606).
+  // unreadable speck in the first box emptied a clean six-digit VS).
   const vsBoxes = trailingRun((row.boxes ?? []).slice(0, vsCells.length));
   const ksBoxes = part(vsCells.length, vsCells.length + ksCells.length);
   const vsText = vsBoxes.includes(null) ? "" : vsBoxes.join("");
@@ -852,7 +852,7 @@ async function readFixedFields(colorCanvas: HTMLCanvasElement, ex: ExtractResult
       continue;
     }
     // The last row runs on past its boxes: the first row breaks after 12 characters and the
-    // second prints the rest, over the column's border ("UZANA HUDECOVÁ", 14). So it is read
+    // second prints the rest, over the column's border (14 on one photo). So it is read
     // MESSAGE_RUN_ON boxes further, and those count only while the letters run on unbroken
     // from the last box: what stands after a gap is the sender's DODÁVACIA POŠTA. A row that
     // does not run on is read again in its own boxes: the wider crop sets the ink threshold a
@@ -874,7 +874,7 @@ async function readFixedFields(colorCanvas: HTMLCanvasElement, ex: ExtractResult
   // Mostly unreadable boxes ("A ??-k A?NT") are noise, not a message to check.
   const unreadable = (message.match(/\?/g) ?? []).length;
   // A message is mostly letters and digits. One printed over the label above its boxes
-  // (OBEDY on SPRÁVA PRE ADRESÁTA) read "-?-VÉ č-": noise, better left empty.
+  // (over the SPRÁVA PRE ADRESÁTA label) read "-?-VÉ č-": noise, better left empty.
   const signs = message.replace(/\s/g, "");
   const wordy = (signs.match(/[\p{L}\p{N}]/gu) ?? []).length >= signs.length * 0.7;
   if ((message.match(/\p{L}/gu) ?? []).length >= 2 && wordy && unreadable <= Math.max(1, message.length * 0.1)) {
@@ -923,16 +923,16 @@ async function secondPass(
     const max = key === "ks" ? 4 : 10;
     const rect: BBox = { x0: b.x0 - w * 0.15, y0: b.y1 - h * 0.6, x1: b.x1 + w * (key === "ks" ? 0.6 : 1.4), y1: b.y1 + h * 3 };
     // The VS boxes end where the KS boxes start, under the KS label. Past it the crop took
-    // KS's first 0 as a seventh VS digit (4456130 for 445613).
+    // KS's first 0 as a seventh VS digit.
     const ks = ex.ks?.labelBox;
     if (key !== "ks" && ks && ks.x0 > b.x1 && Math.abs((ks.y0 + ks.y1) / 2 - (b.y0 + b.y1) / 2) <= h * 1.5) {
       rect.x1 = Math.min(rect.x1, ks.x0 - h * 0.1);
     }
-    // A single isolated shape is a reading that lost the rest (seen: VS "1" for 445606).
+    // A single isolated shape is a reading that lost the rest (seen: VS "1" for a six-digit VS).
     const r = await ocrBoxedDigits(colorCanvas, rect, max, key === "ks" ? isKnownKsClass : undefined, key === "ks" ? 4 : 2);
     tries[key] = { ...r, rect: roundBox(rect) };
     // The boxes showed part of it ("445?13"): a reading of another length or with other
-    // digits is of something else (seen: 4456130, KS's first 0 taken as a VS digit).
+    // digits is of something else (seen: KS's first 0 taken as a seventh VS digit).
     const pattern = ex.patterns?.[key];
     if (r.text && pattern && !fitsPattern(r.text, pattern)) {
       tries[key] = { ...r, rect: roundBox(rect), rejected: `does not fit ${pattern}` };

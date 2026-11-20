@@ -3,8 +3,9 @@
 // The payee's address is printed twice on the form (the stub on the left and
 // the ADRESÁT block in the middle), and each copy can be read twice: by the
 // page OCR and again from its own crop. Every reading has different mistakes:
-// on one photo the stub gave "ZF KLADNÁ ŠKOLA" and the middle copy "ŠZÁKLADNÁ
-// ŠKOLA". Aligned letter by letter, the majority at each place is right more
+// on one photo the stub split the first word in two with a wrong letter, and
+// the middle copy put an extra letter in front of it (on fake text: "ZF KLADNÁ"
+// and "ŠZÁKLADNÁ"). Aligned letter by letter, the majority at each place is right more
 // often than any single reading.
 
 import { strip } from "./text";
@@ -130,7 +131,7 @@ function weight(confidence: number): number {
  */
 function winner(votes: Map<string, number>, edge = false): string {
   // At either end of the line, a letter some readings have and others lack was cut off by
-  // the photo's edge or the crop (a cut stub gave "ÁKLADNÁ"): the letter wins unless its
+  // the photo's edge or the crop (a cut stub lost the first letter): the letter wins unless its
   // absence has more than twice its weight. Inside the line the plain majority decides.
   const none = votes.get("") ?? 0;
   const letters = [...votes].filter(([o]) => /[\p{L}\p{N}]/u.test(o)).sort((a, b) => b[1] - a[1]);
