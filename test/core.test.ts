@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { decode } from "bysquare/pay";
 import { bbanToIban, isValidIban, isValidLegacyPart, mod97 } from "../src/iban";
-import { mod11CheckDigit, parsePoukazBarcode } from "../src/poukaz";
+import { mod11CheckDigit, parsePoukazBarcode, poukazFromDigitLine } from "../src/poukaz";
 import { buildBySquare, buildPaymeLink, parseAmount, toAscii } from "../src/payme";
 import { extractFields, findIban, type OcrLine } from "../src/extract";
 import { gridTiles, segmentCells, voteCells } from "../src/cells";
@@ -116,6 +116,26 @@ describe("poukaz barcode", () => {
   it("rejects other lengths", () => {
     expect(parsePoukazBarcode("12345")).toBeNull();
     expect(parsePoukazBarcode("abc")).toBeNull();
+  });
+});
+
+describe("poukaz code from the digits under the bars", () => {
+  // Read by OCR from two blurred photos whose bars zxing could not decode.
+  const code = "380001391100000000294101671600000000003000000006";
+  it("finds the code among other digits", () => {
+    const p = poukazFromDigitLine("0009039990990" + code);
+    expect(p?.iban).toBe("SK3911000000002941016716");
+    expect(p?.mod11).toBe("ok");
+  });
+  it("keeps only the IBAN when a misread digit breaks the check digit", () => {
+    // Seen: 3006000006 for 3000000006, which gave an amount of 6000,00.
+    const p = poukazFromDigitLine(code.replace("3000000006", "3006000006"));
+    expect(p?.iban).toBe("SK3911000000002941016716");
+    expect(p?.amountCents).toBeUndefined();
+    expect(p?.mod11).toBe("n/a");
+  });
+  it("gives nothing when the IBAN fails", () => {
+    expect(poukazFromDigitLine(code.replace("2941016716", "2941016717"))).toBeUndefined();
   });
 });
 
@@ -470,6 +490,17 @@ describe("name vote", () => {
   it("leaves out readings of another line", () => {
     const r = vote([["ZÁKLADNÁ ŠKOLA, VZOROVÁ CESTA 1", 90], ["| ZASA doom", 28]]);
     expect(r).toEqual({ text: "ZÁKLADNÁ ŠKOLA, VZOROVÁ CESTA 1", used: 1 });
+  });
+});
+
+describe("name vote marks", () => {
+  it("reads a dollar sign as Š", () => {
+    // A typewriter-like font: "ŠKOLSKÝ KLUB PRI ZŠ" read "$KOLSKY ... Z$".
+    const v = consensus([
+      { text: "$KOLSKY KLUB PRI Z$", confidence: 92 },
+      { text: "ŠKOLSKY KLUB PRI Z$", confidence: 80 },
+    ]);
+    expect(v?.text).toBe("ŠKOLSKY KLUB PRI ZŠ");
   });
 });
 
