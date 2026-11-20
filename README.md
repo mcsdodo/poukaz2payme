@@ -45,6 +45,9 @@ npm test
 npm run dev
 ```
 
+`npm run test:photos` reads real photos of forms, kept outside this repository; see
+[TESTING.md](TESTING.md).
+
 `npm run build` writes a static site to `dist/`. Serve it from any path. Over HTTPS the
 service worker works offline; the scan itself only needs the file input.
 

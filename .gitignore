@@ -1,3 +1,7 @@
 node_modules/
 dist/
 public/vendor/
+# Real photos and their diagnostics are personal data: see TESTING.md.
+test-results/
+/photos/
+/poukaz2payme-photos/
